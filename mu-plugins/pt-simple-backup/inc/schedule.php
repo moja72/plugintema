@@ -625,7 +625,7 @@ if (!$cycles) {
     // ====== NOVA ENGINE: rotinas ======
     $g       = ptsb_cycles_global_get();
     $state   = ptsb_cycles_state_get();
-    $running = file_exists($cfg['lock']);
+    $running = ptsb_lock_is_active();
     // carregar/limpar mapa de execuções a ignorar
     ptsb_skipmap_gc();
     $skipmap = ptsb_skipmap_get();
@@ -866,7 +866,9 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
-    if (file_exists($cfg['lock'])) { return; }
+    $lock = ptsb_lock_try_acquire();
+    if (!$lock) { return; }
+    $token = (string)($lock['token'] ?? '');
 
     ptsb_log_rotate_if_needed();
 
@@ -916,7 +918,22 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
 
-    shell_exec($cmd);
+    $result = shell_exec($cmd);
+    $pid    = 0;
+    if (is_string($result)) {
+        $trim = trim($result);
+        if ($trim !== '' && ctype_digit($trim)) {
+            $pid = (int) $trim;
+        } elseif (preg_match('/(\d+)/', $trim, $m)) {
+            $pid = (int) $m[1];
+        }
+    }
+
+    if ($pid > 0 && $token !== '') {
+        ptsb_lock_touch($token, ['pid' => $pid]);
+    } else {
+        ptsb_lock_release($token !== '' ? $token : null);
+    }
 }
 
 /** Inicia backup com PARTS customizadas (bypass do ptsb_start_backup padrão) */
@@ -925,7 +942,9 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
-    if (file_exists($cfg['lock'])) return;
+    $lock = ptsb_lock_try_acquire();
+    if (!$lock) return;
+    $token = (string)($lock['token'] ?? '');
 
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '
@@ -937,7 +956,22 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
 
     $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
-    shell_exec($cmd);
+    $result = shell_exec($cmd);
+    $pid    = 0;
+    if (is_string($result)) {
+        $trim = trim($result);
+        if ($trim !== '' && ctype_digit($trim)) {
+            $pid = (int) $trim;
+        } elseif (preg_match('/(\d+)/', $trim, $m)) {
+            $pid = (int) $m[1];
+        }
+    }
+
+    if ($pid > 0 && $token !== '') {
+        ptsb_lock_touch($token, ['pid' => $pid]);
+    } else {
+        ptsb_lock_release($token !== '' ? $token : null);
+    }
 }
 
 // checar notificação no admin e também no cron do plugin

@@ -36,7 +36,7 @@ function ptsb_log_rotate_if_needed(): void {
     }
 
     // 2) estratégia conforme lock
-    $running = @file_exists((string)$cfg['lock']);
+    $running = ptsb_lock_is_active();
     if ($running) {
         // copytruncate
         @copy($log, $log . '.1');
@@ -65,7 +65,7 @@ function ptsb_log_clear_all(): void {
     $keep = max(1, (int)($cfg['log_keep'] ?? 5));
     if ($log === '') return;
 
-    $running = @file_exists((string)$cfg['lock']);
+    $running = ptsb_lock_is_active();
 
     // apaga rotações conhecidas (varremos um pouco além por segurança)
     for ($i = 1; $i <= ($keep + 5); $i++) {
@@ -246,7 +246,7 @@ function ptsb_maybe_notify_backup_done() {
     set_transient($th_key, $now_ts, 15);
 
     // se ainda está rodando, não notifica (loga no máx 1x/min)
-    if (file_exists($cfg['lock'])) {
+    if (ptsb_lock_is_active()) {
         if (!get_transient('ptsb_notify_lock_log_rl')) {
             set_transient('ptsb_notify_lock_log_rl', 1, 60);
             ptsb_log('[notify] pulando: lock presente (backup rodando).');
