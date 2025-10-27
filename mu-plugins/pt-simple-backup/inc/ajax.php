@@ -42,7 +42,32 @@ add_action('wp_ajax_ptsb_status', function () {
             if (strpos($section, $k) !== false) { $percent = max($percent, $p); $stage = $k; }
         }
     }
-    $running = ptsb_lock_is_active() && $percent < 100;
+    $queue = ptsb_backup_queue_get();
+    if (!empty($queue['id']) && !empty($queue['chunks'])) {
+        $total     = max(1, (int)$queue['total']);
+        $completed = min((int)$queue['completed'], $total);
+        $perChunk  = 100 / $total;
+        $basePct   = max(0, min(100, (int)$percent));
+        $currentIx = min(max(0, $completed), $total - 1);
+        $current   = $queue['chunks'][$currentIx] ?? [];
+        $label     = (string)($current['label'] ?? 'Parte');
+
+        if ((string)$queue['status'] === 'completed') {
+            $percent = 100;
+            $stage   = sprintf('Etapa %d/%d: %s', $total, $total, $label);
+        } else {
+            $progress = $completed * $perChunk;
+            if ((string)$queue['status'] === 'running') {
+                $progress += ($basePct / 100) * $perChunk;
+            }
+            $percent = (int) round(min(100, $progress));
+            $stage   = sprintf('Etapa %d/%d: %s', min($completed + 1, $total), $total, $label)
+                     . ($basePct > 0 && $basePct < 100 && $stage !== 'idle' ? ' · ' . $stage : '');
+        }
+    }
+
+    $running = (ptsb_lock_is_active() || (!empty($queue['id']) && in_array($queue['status'], ['pending','running'], true)))
+        && $percent < 100;
 
     wp_send_json_success([
         'running' => (bool)$running,
@@ -50,5 +75,6 @@ add_action('wp_ajax_ptsb_status', function () {
         'stage'   => (string)$stage,
         'log'     => (string)$tail,
         'job'     => ptsb_manual_job_response_payload(),
+        'queue'   => ptsb_backup_queue_public_payload(),
     ]);
 });
