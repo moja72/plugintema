@@ -131,6 +131,130 @@ function ptsb_can_shell() {
     return function_exists('shell_exec') && !in_array('shell_exec', $disabled, true);
 }
 
+function ptsb_lock_key(): string { return 'ptsb_lock_active'; }
+
+function ptsb_lock_owner_key(): string { return 'ptsb_lock_owner'; }
+
+function ptsb_lock_ttl(): int {
+    return (int) apply_filters('ptsb_lock_ttl', 2 * HOUR_IN_SECONDS);
+}
+
+function ptsb_lock_token(): string {
+    try { return bin2hex(random_bytes(8)); } catch (Throwable $e) { return md5(uniqid('ptsb', true)); }
+}
+
+function ptsb_lock_store(array $payload, ?int $ttl = null): void {
+    $ttl = $ttl ?? ptsb_lock_ttl();
+    $key = ptsb_lock_key();
+    set_transient($key, $payload, $ttl);
+    update_option($key, $payload, false);
+}
+
+function ptsb_lock_info(): array {
+    $key = ptsb_lock_key();
+    $ttl = ptsb_lock_ttl();
+    $info = get_transient($key);
+    if (!is_array($info)) {
+        $opt = get_option($key, []);
+        $info = is_array($opt) ? $opt : [];
+    }
+
+    $cfg      = ptsb_cfg();
+    $lockPath = (string)($cfg['lock'] ?? '');
+    $hasFile  = $lockPath !== '' && @file_exists($lockPath);
+    $timestamp = isset($info['timestamp']) ? (int) $info['timestamp'] : 0;
+
+    if ($timestamp) {
+        $age = time() - $timestamp;
+        if ($ttl <= 0 || $age <= $ttl) {
+            if ($hasFile || $age <= 120) {
+                return $info;
+            }
+        }
+    }
+
+    $mtime = $hasFile ? (int) @filemtime($lockPath) : 0;
+    if ($mtime && ($ttl <= 0 || (time() - $mtime) <= $ttl)) {
+        return [
+            'pid'       => (int)($info['pid'] ?? 0),
+            'timestamp' => $mtime,
+            'token'     => (string)($info['token'] ?? ''),
+            'source'    => 'file',
+        ];
+    }
+
+    if ($timestamp) {
+        ptsb_lock_release();
+    }
+
+    return [];
+}
+
+function ptsb_lock_is_active(): bool {
+    return !empty(ptsb_lock_info());
+}
+
+function ptsb_lock_release(?string $token = null): void {
+    $ownerKey = ptsb_lock_owner_key();
+    if ($token !== null) {
+        $owner = (string) get_option($ownerKey, '');
+        if ($owner !== '' && $owner !== $token) {
+            return;
+        }
+    }
+    delete_option($ownerKey);
+    delete_transient(ptsb_lock_key());
+    delete_option(ptsb_lock_key());
+}
+
+function ptsb_lock_touch(string $token, array $extra = []): void {
+    $info = ptsb_lock_info();
+    if (!$info || ($info['token'] ?? '') !== $token) {
+        return;
+    }
+
+    $payload = array_merge($info, $extra);
+    $payload['token']     = $token;
+    $payload['timestamp'] = time();
+    ptsb_lock_store($payload);
+}
+
+function ptsb_lock_try_acquire(int $attempts = 4, ?int $ttl = null): ?array {
+    $ttl      = $ttl ?? ptsb_lock_ttl();
+    $ownerKey = ptsb_lock_owner_key();
+    $token    = ptsb_lock_token();
+
+    for ($i = 0; $i < max(1, $attempts); $i++) {
+        if (add_option($ownerKey, $token, '', 'no')) {
+            $payload = [
+                'pid'       => getmypid() ?: 0,
+                'timestamp' => time(),
+                'token'     => $token,
+            ];
+            ptsb_lock_store($payload, $ttl);
+            return $payload;
+        }
+
+        $info = ptsb_lock_info();
+        if (!$info) {
+            delete_option($ownerKey);
+        } else {
+            $age = time() - (int)($info['timestamp'] ?? 0);
+            if ($age > $ttl) {
+                $owner = (string) get_option($ownerKey, '');
+                if ($owner === '' || $owner === (string)($info['token'] ?? '')) {
+                    ptsb_lock_release();
+                    continue;
+                }
+            }
+        }
+
+        usleep((int)((40 + mt_rand(10, 60)) * 1000 * ($i + 1)));
+    }
+
+    return null;
+}
+
 function ptsb_is_readable($p){ return @is_file($p) && @is_readable($p); }
 
 function ptsb_tz() {
