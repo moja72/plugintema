@@ -230,68 +230,65 @@ ptsb_start_backup($partsCsv, $prefix, $manual_days);
         }
 
         // já existe arquivo com o novo nome?
-        $exists = shell_exec(
-            '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-            ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-            ' --include '.escapeshellarg($new).' --fast-list'
+        $exists = ptsb_rclone_exec(
+            'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
+            . ' --include ' . escapeshellarg($new) . ' --fast-list'
         );
         if (trim((string)$exists) !== '') {
             add_settings_error('ptsb','rn_exists','Já existe um arquivo com esse nome no Drive.', 'error'); ptsb_back();
         }
 
         // renomeia o arquivo principal
-        $mv = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-            . ' rclone moveto ' . escapeshellarg($cfg['remote'].$old) . ' ' . escapeshellarg($cfg['remote'].$new) . ' --fast-list 2>&1';
-        $out = shell_exec($mv);
+        $out = ptsb_rclone_exec(
+            'moveto ' . escapeshellarg($cfg['remote'] . $old) . ' ' . escapeshellarg($cfg['remote'] . $new) . ' --fast-list 2>&1'
+        );
 
         // checa sucesso
-        $chkOld = shell_exec(
-            '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-            ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-            ' --include '.escapeshellarg($old).' --fast-list'
+        $chkOld = ptsb_rclone_exec(
+            'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
+            . ' --include ' . escapeshellarg($old) . ' --fast-list'
         );
 
 // renomeia .json (se existir): .tar.gz -> .json
 $oldJson = ptsb_tar_to_json($old);
 $newJson = ptsb_tar_to_json($new);
 
-$hasJson = shell_exec(
-    '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-  . ' rclone lsf ' . escapeshellarg($cfg['remote'])
+$hasJson = ptsb_rclone_exec(
+    'lsf ' . escapeshellarg($cfg['remote'])
   . ' --files-only --format "p" --include ' . escapeshellarg($oldJson) . ' --fast-list'
 );
 
 if (trim((string)$hasJson) !== '') {
-    $mvj = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-         . ' rclone moveto ' . escapeshellarg($cfg['remote'].$oldJson) . ' ' . escapeshellarg($cfg['remote'].$newJson) . ' --fast-list';
-    shell_exec($mvj);
+    ptsb_rclone_exec(
+        'moveto ' . escapeshellarg($cfg['remote'] . $oldJson) . ' ' . escapeshellarg($cfg['remote'] . $newJson) . ' --fast-list'
+    );
 }
 
 
-        
-        $chkNew = shell_exec(
-            '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-            ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-            ' --include '.escapeshellarg($new).' --fast-list'
+
+        $chkNew = ptsb_rclone_exec(
+            'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
+            . ' --include ' . escapeshellarg($new) . ' --fast-list'
         );
 
         if (trim((string)$chkOld) === '' && trim((string)$chkNew) !== '') {
             // renomeia .keep (se existir)
             $oldKeep = $old.'.keep';
             $newKeep = $new.'.keep';
-            $hasKeep = shell_exec(
-                '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '.
-                ' rclone lsf '.escapeshellarg($cfg['remote']).' --files-only --format "p" '.
-                ' --include '.escapeshellarg($oldKeep).' --fast-list'
+            $hasKeep = ptsb_rclone_exec(
+                'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
+                . ' --include ' . escapeshellarg($oldKeep) . ' --fast-list'
             );
             if (trim((string)$hasKeep) !== '') {
-                $mvk = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                     . ' rclone moveto ' . escapeshellarg($cfg['remote'].$oldKeep).' '.escapeshellarg($cfg['remote'].$newKeep).' --fast-list';
-                shell_exec($mvk);
+                ptsb_rclone_exec(
+                    'moveto ' . escapeshellarg($cfg['remote'] . $oldKeep) . ' '
+                    . escapeshellarg($cfg['remote'] . $newKeep) . ' --fast-list'
+                );
             }
 
             ptsb_log('Arquivo renomeado via painel: '.$old.' ? '.$new);
             add_settings_error('ptsb','rn_ok','Arquivo renomeado para: '.$new, 'updated');
+            ptsb_remote_cache_flush();
         } else {
             add_settings_error('ptsb','rn_fail','Falha ao renomear o arquivo. '.(is_string($out)?htmlspecialchars($out):''), 'error');
         }
@@ -305,18 +302,20 @@ if (trim((string)$hasJson) !== '') {
         $keep = isset($_POST['keep']) && $_POST['keep'] === '1';
 
         if ($keep) {
-            $touch = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                   . ' rclone touch ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --no-create-dirs';
-            $rcat  = 'printf "" | /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                   . ' rclone rcat ' . escapeshellarg($cfg['remote'].$file.'.keep');
-            shell_exec($touch . ' || ' . $rcat);
+            $touch = ptsb_rclone_exec(
+                'touch ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --no-create-dirs'
+            );
+            if ($touch === null || trim((string)$touch) === '') {
+                ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $file . '.keep'), '');
+            }
             add_settings_error('ptsb', 'keep_on', 'Marcado como "Sempre manter".', 'updated');
         } else {
-            $cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-                 . ' rclone deletefile ' . escapeshellarg($cfg['remote'].$file.'.keep') . ' --fast-list';
-            shell_exec($cmd);
+            ptsb_rclone_exec(
+                'deletefile ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --fast-list'
+            );
             add_settings_error('ptsb', 'keep_off', 'Marca "Sempre manter" removida.', 'updated');
         }
+        ptsb_remote_cache_flush();
         ptsb_back();
     }
 
@@ -335,10 +334,9 @@ if (trim((string)$hasJson) !== '') {
             add_settings_error('ptsb', 'rs_started', 'Restaura&ccedil;&atilde;o iniciada para: '.$file.'.', 'updated');
 
      } else {
-    $chk = shell_exec(
-        '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-      . ' rclone lsf ' . escapeshellarg($cfg['remote'])
-      . ' --files-only --format "p" --include ' . escapeshellarg($file.'.keep') . ' --fast-list'
+    $chk = ptsb_rclone_exec(
+        'lsf ' . escapeshellarg($cfg['remote'])
+      . ' --files-only --format "p" --include ' . escapeshellarg($file . '.keep') . ' --fast-list'
     );
     if (trim((string)$chk) !== '') {
         add_settings_error('ptsb', 'del_block', 'Este arquivo está marcado como "Sempre manter". Remova a marca antes de apagar.', 'error');
@@ -346,19 +344,20 @@ if (trim((string)$hasJson) !== '') {
     }
 
 // apaga o .tar.gz
-$cmd = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-     . ' rclone deletefile ' . escapeshellarg($cfg['remote'].$file) . ' --fast-list';
-shell_exec($cmd);
+ptsb_rclone_exec(
+     'deletefile ' . escapeshellarg($cfg['remote'] . $file) . ' --fast-list'
+);
 
 // apaga o sidecar JSON correto: foo.tar.gz -> foo.json
 $jsonPath = ptsb_tar_to_json($file);
-$cmd_json = '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-          . ' rclone deletefile ' . escapeshellarg($cfg['remote'].$jsonPath) . ' --fast-list';
-shell_exec($cmd_json);
+ptsb_rclone_exec(
+          'deletefile ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' --fast-list'
+);
 
 delete_transient('ptsb_m_' . md5($file));
+ptsb_remote_cache_flush();
 
-  
+
 
 add_settings_error('ptsb', 'del_done', 'Arquivo (e JSON) removidos do Drive: '.$file, 'updated');
 

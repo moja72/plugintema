@@ -1,516 +1,583 @@
-<?php
-return [
-    'script_1' => <<<'JS'
-(function(){
-  var f=document.getElementById('ptsb-per-form'); if(!f) return;
-  var i=f.querySelector('input[name="per"]');
-  i.addEventListener('change', function(){ f.submit(); });
-})();
-JS,
-    'script_2' => <<<'JS'
-(function(){
-  const ajaxUrl = window.ajaxurl || "<?php echo esc_js( admin_url('admin-ajax.php') ); ?>";
-  const nonce   = "<?php echo esc_js($nonce); ?>";
+(function (window, document) {
+  'use strict';
 
-  // coleta arquivos visíveis da página atual
-  function collectFiles(){
+  const data = window.ptsbAdminData || {};
+  const ajaxUrl = data.ajaxUrl || window.ajaxurl || '';
+  const nonce = data.nonce || '';
+  const prefix = data.prefix || '';
+  const defaults = data.defaults || {};
+  const defaultLetters = Array.isArray(defaults.letters) ? defaults.letters : ['D', 'P', 'T', 'W', 'S', 'M', 'O'];
+  const urls = data.urls || {};
+  const perPage = data.perPage || {};
+  const filters = data.filters || {};
+
+  function ready(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
+  }
+
+  function collectFiles() {
     return Array.from(document.querySelectorAll('table.widefat tbody tr[data-file]'))
       .map(tr => tr.getAttribute('data-file'));
   }
 
-  // util: desenha os ícones de letras
-  function letterIcon(L){
+  function letterIcon(letter) {
     const map = {
-      'D': 'dashicons-database',
-      'P': 'dashicons-admin-plugins',
-      'T': 'dashicons-admin-appearance',
-      'W': 'dashicons-wordpress-alt',
-      'S': 'dashicons-editor-code',
-      'M': 'dashicons-admin-media',
-      'O': 'dashicons-image-filter'
+      D: 'dashicons-database',
+      P: 'dashicons-admin-plugins',
+      T: 'dashicons-admin-appearance',
+      W: 'dashicons-wordpress-alt',
+      S: 'dashicons-editor-code',
+      M: 'dashicons-admin-media',
+      O: 'dashicons-image-filter'
     };
-    const cls = map[L] || 'dashicons-marker';
-    return '<span class="ptsb-mini" title="'+L+'"><span class="dashicons '+cls+'"></span></span>';
+    const cls = map[letter] || 'dashicons-marker';
+    return '<span class="ptsb-mini" title="' + letter + '"><span class="dashicons ' + cls + '"></span></span>';
   }
 
-  // util: calcula badge de retenção (“sempre” | X/Y | —) e vencido
-  function renderRetentionCell(tr, keepDays){
+  function renderRetentionCell(tr, keepDays) {
     const kept = tr.getAttribute('data-kept') === '1';
-    const td   = tr.querySelector('.ptsb-col-ret'); if (!td) return;
+    const td = tr.querySelector('.ptsb-col-ret');
+    if (!td) return;
 
-    if (kept) {
+    if (kept || keepDays === 0) {
       td.innerHTML = '<span class="ptsb-ret sempre" title="Sempre manter">sempre</span>';
+      tr.classList.remove('ptsb-expired');
       return;
     }
-    if (keepDays === null) {
+
+    if (keepDays === null || Number.isNaN(keepDays)) {
       td.textContent = '—';
+      tr.classList.remove('ptsb-expired');
       return;
     }
-    if (keepDays === 0) {
-      td.innerHTML = '<span class="ptsb-ret sempre" title="Sempre manter">sempre</span>';
-      return;
-    }
+
     const iso = tr.getAttribute('data-time');
-    const created = new Date(iso);
+    const created = iso ? new Date(iso) : null;
     const now = new Date();
-    const elapsedDays = Math.max(0, Math.floor((now - created) / 86400000));
+    let elapsedDays = 0;
+    if (created instanceof Date && !Number.isNaN(created.getTime())) {
+      elapsedDays = Math.max(0, Math.floor((now - created) / 86400000));
+    }
     const x = Math.min(keepDays, elapsedDays + 1);
-    const expired = (x >= keepDays);
+    const expired = x >= keepDays;
 
-    td.innerHTML = '<span class="ptsb-ret" title="Dia '+x+' de '+keepDays+'">'+x+'/'+keepDays+'</span>';
+    td.innerHTML = '<span class="ptsb-ret" title="Dia ' + x + ' de ' + keepDays + '">' + x + '/' + keepDays + '</span>';
 
-    // aplica classe “vencido” na linha + badge no nome do arquivo (se quiser)
-    if (expired && !kept) {
-      tr.classList.add('ptsb-expired');
-      const nameCell = tr.querySelector('.ptsb-filename');
-      if (nameCell && !nameCell.nextElementSibling?.classList?.contains('ptsb-tag')) {
-        const tag = document.createElement('span');
-        tag.className = 'ptsb-tag vencido';
-        tag.textContent = 'vencido';
-        nameCell.insertAdjacentElement('afterend', tag);
+    tr.classList.toggle('ptsb-expired', expired);
+    const nameCell = tr.querySelector('.ptsb-filename');
+    if (nameCell) {
+      const existingTag = nameCell.parentElement?.querySelector('.ptsb-tag.vencido');
+      if (expired) {
+        if (!existingTag) {
+          const tag = document.createElement('span');
+          tag.className = 'ptsb-tag vencido';
+          tag.textContent = 'vencido';
+          nameCell.insertAdjacentElement('afterend', tag);
+        }
+      } else if (existingTag) {
+        existingTag.remove();
       }
     }
   }
 
-  function hydrate(){
+  function initHydrateTable() {
     const files = collectFiles();
-    if (!files.length) return;
+    if (!files.length || !ajaxUrl || !nonce) return;
 
-    const body = new URLSearchParams();
-    body.set('action', 'ptsb_details_batch');
-    body.set('nonce', nonce);
-    files.forEach(f => body.append('files[]', f));
+    const params = new URLSearchParams();
+    params.set('action', 'ptsb_details_batch');
+    params.set('nonce', nonce);
+    files.forEach(file => params.append('files[]', file));
 
-    fetch(ajaxUrl, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body.toString()})
-      .then(r => r.json()).then(res => {
+    fetch(ajaxUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString()
+    })
+      .then(resp => resp.json())
+      .then(res => {
         if (!res || !res.success || !res.data) return;
-        const data = res.data;
-
-        // preenche cada linha
+        const info = res.data;
         files.forEach(file => {
-          const tr = document.querySelector('tr[data-file="'+CSS.escape(file)+'"]');
+          const tr = document.querySelector('tr[data-file="' + CSS.escape(file) + '"]');
           if (!tr) return;
-          const d  = data[file] || {};
+          const details = info[file] || {};
 
-          // Rotina
-          const cR = tr.querySelector('.ptsb-col-rotina');
-          if (cR) cR.textContent = d.routine_label || '—';
-
-          // Letras
-          const cL = tr.querySelector('.ptsb-col-letters');
-          if (cL) {
-            const letters = (d.parts_letters && d.parts_letters.length) ? d.parts_letters : ['D','P','T','W','S','M','O'];
-            cL.innerHTML = letters.map(letterIcon).join('');
+          const routine = tr.querySelector('.ptsb-col-rotina');
+          if (routine) {
+            routine.textContent = details.routine_label || '—';
           }
 
-          // Retenção (e marca "vencido")
-          renderRetentionCell(tr, (d.keep_days === null ? null : parseInt(d.keep_days,10)));
+          const lettersCell = tr.querySelector('.ptsb-col-letters');
+          if (lettersCell) {
+            const letters = Array.isArray(details.parts_letters) && details.parts_letters.length
+              ? details.parts_letters
+              : defaultLetters;
+            lettersCell.innerHTML = letters.map(letterIcon).join('');
+          }
+
+          const keepDays = details.keep_days === null || details.keep_days === undefined
+            ? null
+            : parseInt(details.keep_days, 10);
+          renderRetentionCell(tr, Number.isNaN(keepDays) ? null : keepDays);
         });
       })
-      .catch(()=>{ /* silencioso */ });
+      .catch(() => {
+        /* silent */
+      });
   }
 
-  // roda após a tabela existir
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', hydrate);
-  } else {
-    hydrate();
-  }
-})();
-JS,
-    'script_3' => <<<'JS'
-  (function(){
-    var i=document.getElementById('ptsb-pager-input');
-    if(!i) return;
-    function go(){
-      var min=parseInt(i.min,10)||1, max=parseInt(i.max,10)||1;
-      var v = Math.max(min, Math.min(max, parseInt(i.value,10)||min));
-      // >>> TROCA: mantém na aba "backup" e usa $per/$paged
-      location.href = '<?php echo esc_js( add_query_arg([
-        'page'  => 'pt-simple-backup',
-        'tab'   => 'backup',
-        'per'   => $per,
-        'paged' => '__P__',
-      ], admin_url('tools.php')) ); ?>'.replace('__P__', v);
+  function initBackupPager() {
+    const input = document.getElementById('ptsb-pager-input');
+    if (!input || !urls.backupPager) return;
+
+    function go() {
+      const min = parseInt(input.min, 10) || 1;
+      const max = parseInt(input.max, 10) || Math.max(min, 1);
+      const value = Math.max(min, Math.min(max, parseInt(input.value, 10) || min));
+      window.location.href = urls.backupPager.replace('__PAGE__', value);
     }
-    i.addEventListener('change', go);
-    i.addEventListener('keyup', function(e){ if(e.key==='Enter'){ go(); }});
-  })();
-JS,
-    'script_4' => <<<'JS'
-        (function(){
-          // Chips -> envia letters em parts_sel[]
-          const chipsBox = document.getElementById('ptsb-chips');
-          const formNow  = document.getElementById('ptsb-now-form');
-          function getActiveLetters(){
-            const arr=[]; chipsBox.querySelectorAll('.ptsb-chip').forEach(c=>{
-              if(c.classList.contains('active')) arr.push(String(c.dataset.letter||'').toUpperCase());
-            }); return arr;
-          }
-         function getActiveLetters(){
-  const sel = chipsBox.querySelectorAll('input[type="checkbox"][data-letter]:checked');
-  return Array.from(sel).map(i => String(i.dataset.letter||'').toUpperCase());
-}
 
-          formNow.addEventListener('submit', function(){
-            const sentinel = document.getElementById('ptsb-parts-hidden-sentinel');
-            if(sentinel) sentinel.parentNode.removeChild(sentinel);
-            formNow.querySelectorAll('input[name="parts_sel[]"]').forEach(i=>i.remove());
-            const L = getActiveLetters();
-            (L.length ? L : ['D','P','T','W','S','M','O']).forEach(letter=>{
-              const i=document.createElement('input'); i.type='hidden'; i.name='parts_sel[]'; i.value=letter; formNow.appendChild(i);
-            });
-          });
-        })();
-        (function(){
-          const cb   = document.getElementById('ptsb-man-keep-forever');
-          const days = document.querySelector('#ptsb-now-form input[name="manual_keep_days"]');
-          if (!cb || !days) return;
-          function sync(){ days.disabled = cb.checked; days.style.opacity = cb.checked ? .5 : 1; }
-          cb.addEventListener('change', sync); sync();
-        })();
+    input.addEventListener('change', go);
+    input.addEventListener('keyup', function (ev) {
+      if (ev.key === 'Enter') {
+        go();
+      }
+    });
+  }
 
-       (function(){
-  const ajaxUrl = window.ajaxurl || "<?php echo esc_js( admin_url('admin-ajax.php') ); ?>";
-  const nonce   = "<?php echo esc_js($nonce); ?>";
+  function initManualBackupForm() {
+    const form = document.getElementById('ptsb-now-form');
+    const chipsBox = document.getElementById('ptsb-chips');
+    if (!form || !chipsBox) return;
 
-  const barBox  = document.getElementById('ptsb-progress');
-  const bar     = document.getElementById('ptsb-progress-bar');
-  const btxt    = document.getElementById('ptsb-progress-text');
+    const keepToggle = form.querySelector('#ptsb-man-keep-forever');
+    const keepDays = form.querySelector('input[name="manual_keep_days"]');
 
-  let wasRunning=false, didReload=false;
+    function syncKeepDays() {
+      if (!keepToggle || !keepDays) return;
+      keepDays.disabled = keepToggle.checked;
+      keepDays.style.opacity = keepToggle.checked ? '0.5' : '1';
+    }
 
-  function poll(){
-    const body = new URLSearchParams({action:'ptsb_status', nonce:nonce}).toString();
-    fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})
-      .then(r=>r.json()).then(res=>{
-        if(!res || !res.success) return;
-        const s = res.data || {};
-        if(s.running){
-          wasRunning = true; barBox.style.display='block';
-          const pct = Math.max(5, Math.min(100, s.percent|0));
-          bar.style.width = pct + '%';
-          btxt.textContent = (pct<100 ? (pct+'% - '+(s.stage||'executando…')) : '100%');
-        } else {
-          if(wasRunning && (s.percent|0) >= 100 && !didReload){
-            didReload = true; bar.style.width='100%'; btxt.textContent='100% - concluído';
-            setTimeout(function(){ location.reload(); }, 1200);
+    if (keepToggle && keepDays) {
+      keepToggle.addEventListener('change', syncKeepDays);
+      syncKeepDays();
+    }
+
+    form.addEventListener('submit', function () {
+      const sentinel = document.getElementById('ptsb-parts-hidden-sentinel');
+      if (sentinel) sentinel.remove();
+      form.querySelectorAll('input[name="parts_sel[]"]').forEach(el => el.remove());
+      const checked = Array.from(chipsBox.querySelectorAll('input[type="checkbox"][data-letter]:checked'))
+        .map(cb => String(cb.dataset.letter || '').toUpperCase())
+        .filter(Boolean);
+      const letters = checked.length ? checked : defaultLetters;
+      letters.forEach(letter => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'parts_sel[]';
+        input.value = letter;
+        form.appendChild(input);
+      });
+    });
+  }
+
+  function initProgressPoll() {
+    const box = document.getElementById('ptsb-progress');
+    const bar = document.getElementById('ptsb-progress-bar');
+    const text = document.getElementById('ptsb-progress-text');
+    if (!box || !bar || !text || !ajaxUrl || !nonce) return;
+
+    let wasRunning = false;
+    let didReload = false;
+
+    function poll() {
+      const params = new URLSearchParams({ action: 'ptsb_status', nonce });
+      fetch(ajaxUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      })
+        .then(resp => resp.json())
+        .then(res => {
+          if (!res || !res.success) return;
+          const status = res.data || {};
+          if (status.running) {
+            wasRunning = true;
+            box.style.display = 'block';
+            const pct = Math.max(5, Math.min(100, status.percent | 0));
+            bar.style.width = pct + '%';
+            text.textContent = pct < 100 ? (pct + '% - ' + (status.stage || 'executando…')) : '100%';
           } else {
-            barBox.style.display='none';
+            if (wasRunning && (status.percent | 0) >= 100 && !didReload) {
+              didReload = true;
+              bar.style.width = '100%';
+              text.textContent = '100% - concluído';
+              window.setTimeout(() => window.location.reload(), 1200);
+            } else {
+              box.style.display = 'none';
+            }
+            wasRunning = false;
           }
-          wasRunning = false;
-        }
-      }).catch(()=>{});
-  }
-  poll(); setInterval(poll, 2000);
-})();
+        })
+        .catch(() => {
+          /* silent */
+        });
+    }
 
-        (function(){
-          // Renomear por apelido
-          document.addEventListener('click', function(ev){
-            const btn = ev.target.closest('.ptsb-rename-btn'); if(!btn) return;
-            const form = btn.closest('form.ptsb-rename-form'); if(!form) return;
-            const oldFull = btn.getAttribute('data-old')||'';
-            const prefix  = "<?php echo esc_js( ptsb_cfg()['prefix'] ); ?>";
-            let currentNick = oldFull.replace(new RegExp('^'+prefix), '').replace(/\.tar\.gz$/i,'');
-            let nick = window.prompt('Novo apelido (apenas a parte entre "'+prefix+'" e ".tar.gz"):', currentNick);
-            if(nick === null) return;
-            nick = (nick||'').trim().replace(/\.tar\.gz$/i,'').replace(new RegExp('^'+prefix),'').replace(/[^A-Za-z0-9._-]+/g,'-');
-            if(!nick){ alert('Apelido inválido.'); return; }
-            const newFull = prefix + nick + '.tar.gz';
-            if(newFull === oldFull){ alert('O nome não foi alterado.'); return; }
-            if(!/^[A-Za-z0-9._-]+\.tar\.gz$/.test(newFull)){ alert('Use apenas letras, números, ponto, hífen e sublinhado. A extensão deve ser .tar.gz.'); return; }
-            form.querySelector('input[name="new_file"]').value = newFull;
-            form.submit();
+    poll();
+    window.setInterval(poll, 2000);
+  }
+
+  function initRenameButtons() {
+    document.addEventListener('click', function (event) {
+      const btn = event.target.closest('.ptsb-rename-btn');
+      if (!btn) return;
+      const form = btn.closest('form.ptsb-rename-form');
+      if (!form) return;
+      const oldFull = btn.getAttribute('data-old') || '';
+      const basePrefix = prefix || '';
+      let currentNick = oldFull.replace(new RegExp('^' + basePrefix), '').replace(/\.tar\.gz$/i, '');
+      let nick = window.prompt('Novo apelido (apenas a parte entre "' + basePrefix + '" e ".tar.gz"):', currentNick);
+      if (nick === null) return;
+      nick = String(nick || '')
+        .trim()
+        .replace(/\.tar\.gz$/i, '')
+        .replace(new RegExp('^' + basePrefix), '')
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .trim();
+      if (!nick) {
+        window.alert('Apelido inválido.');
+        return;
+      }
+      const newFull = basePrefix + nick + '.tar.gz';
+      if (newFull === oldFull) {
+        window.alert('O nome não foi alterado.');
+        return;
+      }
+      if (!/^[A-Za-z0-9._-]+\.tar\.gz$/.test(newFull)) {
+        window.alert('Use apenas letras, números, ponto, hífen e sublinhado. A extensão deve ser .tar.gz.');
+        return;
+      }
+      const target = form.querySelector('input[name="new_file"]');
+      if (!target) return;
+      target.value = newFull;
+      form.submit();
+    });
+  }
+
+  function initCycleLettersForm() {
+    const form = document.getElementById('ptsb-add-cycle-form');
+    const wrap = form ? form.querySelector('#ptsb-add-letters') : null;
+    if (!form || !wrap) return;
+
+    form.addEventListener('submit', function () {
+      form.querySelectorAll('input[name="letters[]"]').forEach(el => el.remove());
+      wrap.querySelectorAll('input[type="checkbox"][data-letter]:checked').forEach(cb => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'letters[]';
+        input.value = String(cb.dataset.letter || '').toUpperCase();
+        form.appendChild(input);
+      });
+    });
+  }
+
+  function initCycleKeepForever() {
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {
+      const cb = form.querySelector('input[name="keep_forever"]');
+      const days = form.querySelector('input[name="keep_days"]');
+      if (!cb || !days) return;
+      function sync() {
+        days.disabled = cb.checked;
+        days.style.opacity = cb.checked ? '0.5' : '1';
+      }
+      cb.addEventListener('change', sync);
+      sync();
+    });
+  }
+
+  function initModeSections() {
+    const selects = document.querySelectorAll('form select[name="mode"]');
+    selects.forEach(sel => {
+      const form = sel.closest('form');
+      if (!form) return;
+      const sections = Array.from(form.querySelectorAll('[data-new]'));
+      function toggle() {
+        const value = sel.value;
+        sections.forEach(section => {
+          const active = section.getAttribute('data-new') === value;
+          section.style.display = active ? '' : 'none';
+          section.querySelectorAll('input, select, textarea').forEach(el => {
+            if (el === sel) return;
+            el.disabled = !active && !el.hasAttribute('data-always-enabled');
           });
-        })();
-        
-JS,
-    'script_5' => <<<'JS'
-(function(){
-  // mantém os chips dentro do form e gera letters[] no submit
-  const form = document.getElementById('ptsb-add-cycle-form');
-  if (!form) return;
-  const wrap = form.querySelector('#ptsb-add-letters');
-  if (!wrap) return;
-
-  form.addEventListener('submit', function(){
-    // limpa restos
-    form.querySelectorAll('input[name="letters[]"]').forEach(i => i.remove());
-    // cria letters[] pelos chips marcados
-    wrap.querySelectorAll('input[type="checkbox"][data-letter]:checked').forEach(cb => {
-      const h = document.createElement('input');
-      h.type = 'hidden';
-      h.name = 'letters[]';
-      h.value = String(cb.dataset.letter || '').toUpperCase();
-      form.appendChild(h);
-    });
-  });
-})();
-JS,
-    'script_6' => <<<'JS'
-(function(form){
-  if(!form) return;
-  var cb   = form.querySelector('input[name="keep_forever"]');
-  var days = form.querySelector('input[name="keep_days"]');
-  if(!cb || !days) return;
-  function sync(){ days.disabled = cb.checked; days.style.opacity = cb.checked ? .5 : 1; }
-  cb.addEventListener('change', sync); sync();
-})(document.currentScript.closest('form'));
-JS,
-    'script_7' => <<<'JS'
-(function(sel){
-  if(!sel) return;
-  const form = sel.closest('form');
-  function toggleSections(){
-    const val = sel.value;
-    form.querySelectorAll('[data-new],[data-sec]').forEach(box=>{
-      const active = (box.getAttribute('data-new')===val) || (box.getAttribute('data-sec')===val);
-      box.style.display = active ? '' : 'none';
-      // desabilita/habilita TODOS inputs/ selects/ textareas da seção
-      box.querySelectorAll('input, select, textarea').forEach(el=>{
-        el.disabled = !active;
-      });
+        });
+      }
+      sel.addEventListener('change', toggle);
+      toggle();
     });
   }
-  sel.addEventListener('change', toggleSections);
-  toggleSections(); // inicial
-})(document.currentScript.previousElementSibling);
-JS,
-    'script_8' => <<<'JS'
-    (function(sel){ if(!sel) return; sel.dispatchEvent(new Event('change')); })
-    (document.currentScript.previousElementSibling);
-  
-JS,
-    'script_9' => <<<'JS'
- (function(qId, boxId){
-  var q = document.getElementById(qId), box = document.getElementById(boxId);
-  if(!q || !box) return;
-  function rebuild(){
-    var n = Math.max(1, Math.min(12, parseInt(q.value,10)||1));
-    var old = Array.from(box.querySelectorAll('input[type="time"]')).map(i=>i.value);
-    box.innerHTML = '';
-    for(var i=0;i<n;i++){
-      var inp = document.createElement('input');
-      inp.type='time'; inp.step=60; inp.name='times[]'; inp.style.width='100%';
-      if(old[i]) inp.value = old[i];
-      box.appendChild(inp);
-    }
-    // NOVO: re-aplica a habilitação da seção ativa (desabilita o resto)
-    var sel = box.closest('form')?.querySelector('select[name="mode"]');
-    if (sel) sel.dispatchEvent(new Event('change'));
-  }
-  q.addEventListener('input', rebuild);
-  rebuild();
-})('new-daily-qty','new-daily-times');
 
-  
-JS,
-    'script_10' => <<<'JS'
-(function(wrap){
-    if(!wrap) return;
-    function sync(){
-      const f = wrap.closest('form');
-      f.querySelectorAll('input[name="wk_days[]"]').forEach(n=>n.remove());
-      wrap.querySelectorAll('.ptsb-chip.active').forEach(ch=>{
-        const i=document.createElement('input');
-        i.type='hidden'; i.name='wk_days[]'; i.value=String(ch.dataset.day||''); f.appendChild(i);
+  function setupTimesBuilder(qtyId, boxId) {
+    const qty = document.getElementById(qtyId);
+    const box = document.getElementById(boxId);
+    if (!qty || !box) return;
+
+    function rebuild() {
+      const limit = Math.max(1, Math.min(12, parseInt(qty.value, 10) || 1));
+      const oldValues = Array.from(box.querySelectorAll('input[type="time"]')).map(i => i.value);
+      box.innerHTML = '';
+      for (let i = 0; i < limit; i += 1) {
+        const input = document.createElement('input');
+        input.type = 'time';
+        input.name = 'times[]';
+        input.step = 60;
+        input.style.width = '100%';
+        if (oldValues[i]) input.value = oldValues[i];
+        box.appendChild(input);
+      }
+      const sel = qty.closest('form')?.querySelector('select[name="mode"]');
+      if (sel) sel.dispatchEvent(new Event('change'));
+    }
+
+    qty.addEventListener('input', rebuild);
+    rebuild();
+  }
+
+  function initTimesBuilder() {
+    setupTimesBuilder('new-daily-qty', 'new-daily-times');
+    setupTimesBuilder('new-weekly-qty', 'new-weekly-times');
+    setupTimesBuilder('new-everyn-qty', 'new-everyn-times');
+  }
+
+  function initWeeklyChips() {
+    const wrap = document.getElementById('wk_new');
+    if (!wrap) return;
+    const form = wrap.closest('form');
+    if (!form) return;
+
+    function sync() {
+      form.querySelectorAll('input[name="wk_days[]"]').forEach(el => el.remove());
+      wrap.querySelectorAll('.ptsb-chip.active').forEach(chip => {
+        const val = chip.getAttribute('data-day');
+        if (val === null) return;
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'wk_days[]';
+        input.value = val;
+        form.appendChild(input);
       });
     }
-    wrap.addEventListener('click', e=>{ const ch=e.target.closest('.ptsb-chip'); if(!ch) return; ch.classList.toggle('active'); sync(); });
+
+    wrap.addEventListener('click', function (event) {
+      const chip = event.target.closest('.ptsb-chip');
+      if (!chip) return;
+      chip.classList.toggle('active');
+      sync();
+    });
+
     sync();
-  })(document.getElementById('wk_new'));
-JS,
-    'script_11' => <<<'JS'
- (function(qId, boxId){
-  var q = document.getElementById(qId), box = document.getElementById(boxId);
-  if(!q || !box) return;
-  function rebuild(){
-    var n = Math.max(1, Math.min(12, parseInt(q.value,10)||1));
-    var old = Array.from(box.querySelectorAll('input[type="time"]')).map(i=>i.value);
-    box.innerHTML = '';
-    for(var i=0;i<n;i++){
-      var inp = document.createElement('input');
-      inp.type='time'; inp.step=60; inp.name='times[]'; inp.style.width='100%';
-      if(old[i]) inp.value = old[i];
-      box.appendChild(inp);
-    }
-    var sel = box.closest('form')?.querySelector('select[name="mode"]');
-    if (sel) sel.dispatchEvent(new Event('change'));
   }
-  q.addEventListener('input', rebuild);
-  rebuild();
-})('new-weekly-qty','new-weekly-times');
 
-  
-JS,
-    'script_12' => <<<'JS'
-  (function(qId, boxId){
-  var q = document.getElementById(qId), box = document.getElementById(boxId);
-  if(!q || !box) return;
-  function rebuild(){
-    var n = Math.max(1, Math.min(12, parseInt(q.value,10)||1));
-    var old = Array.from(box.querySelectorAll('input[type="time"]')).map(i=>i.value);
-    box.innerHTML = '';
-    for(var i=0;i<n;i++){
-      var inp = document.createElement('input');
-      inp.type='time'; inp.step=60; inp.name='times[]'; inp.style.width='100%';
-      if(old[i]) inp.value = old[i];
-      box.appendChild(inp);
-    }
-    var sel = box.closest('form')?.querySelector('select[name="mode"]');
-    if (sel) sel.dispatchEvent(new Event('change'));
-  }
-  q.addEventListener('input', rebuild);
-  rebuild();
-})('new-everyn-qty','new-everyn-times');
-
-  
-JS,
-    'script_13' => <<<'JS'
-// NOVO: desabilita/oculta a janela quando o toggle está ligado
-(function(wrap){
-  if(!wrap) return;
-  var dis = wrap.querySelector('input[name="win_disable"]');
-  var s   = wrap.querySelector('input[name="win_start"]');
-  var e   = wrap.querySelector('input[name="win_end"]');
-  function sync(){
-    var on = dis && dis.checked;
-    [s,e].forEach(function(i){
-      if(!i) return;
-      i.disabled = on;
-      i.style.opacity = on ? .5 : 1;
+  function initWindowToggle() {
+    const toggles = document.querySelectorAll('input[name="win_disable"]');
+    toggles.forEach(cb => {
+      const form = cb.closest('form');
+      if (!form) return;
+      const start = form.querySelector('input[name="win_start"]');
+      const end = form.querySelector('input[name="win_end"]');
+      function sync() {
+        const disabled = cb.checked;
+        [start, end].forEach(input => {
+          if (!input) return;
+          input.disabled = disabled;
+          input.style.opacity = disabled ? '0.5' : '1';
+        });
+      }
+      cb.addEventListener('change', sync);
+      sync();
     });
   }
-  dis && dis.addEventListener('change', sync);
-  sync(); // padrão: ligado
-})(document.currentScript.previousElementSibling);
-JS,
-    'script_14' => <<<'JS'
-(function(){
-  document.addEventListener('submit', function(ev){
-    const f = ev.target;
-    // só nos forms de rotinas (adicionar/editar)
-    if (!f.matches('form') || !f.querySelector('input[name="action"][value="ptsb_cycles"]')) return;
 
-    const modeSel = f.querySelector('select[name="mode"]');
-    if (!modeSel) return;
-    const mode = modeSel.value;
+  function initCycleFormValidation() {
+    document.addEventListener('submit', function (event) {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (!form.querySelector('input[name="action"][value="ptsb_cycles"]')) return;
 
-    // pega a seção ativa (nova ou editar)
-    const sec = f.querySelector('[data-new="'+mode+'"],[data-sec="'+mode+'"]') || f;
+      const modeSel = form.querySelector('select[name="mode"]');
+      if (!modeSel) return;
+      const mode = modeSel.value;
+      const section = form.querySelector('[data-new="' + mode + '"]') || form;
+      const times = Array.from(section.querySelectorAll('input[type="time"]:not([disabled])'));
 
-    // valida horários (todos required)
-    const times = sec.querySelectorAll('input[type="time"]:not([disabled])');
-    for (const inp of times) {
-      inp.required = true;
-      if (!inp.value) { ev.preventDefault(); inp.reportValidity(); return; }
-    }
-
-    // Semanal: exige pelo menos 1 dia
-    if (mode === 'weekly') {
-      const guard = f.querySelector('input[name="wk_days_guard"]');
-      const hasDay = !!sec.querySelector('.ptsb-chips [data-day].active');
-      if (guard) {
-        if (!hasDay) {
-          guard.value=''; guard.setCustomValidity('Selecione pelo menos 1 dia da semana.');
-          ev.preventDefault(); guard.reportValidity(); return;
-        } else {
-          guard.value='ok'; guard.setCustomValidity('');
+      for (const input of times) {
+        input.required = true;
+        if (!input.value) {
+          event.preventDefault();
+          input.reportValidity();
+          return;
         }
       }
-    }
-  }, true);
-})();
-JS,
-    'script_15' => <<<'JS'
-          (function(){
-            var f1=document.getElementById('ptsb-next-date-form');
-            if(f1){ var d=f1.querySelector('input[name="next_date"]'); d&&d.addEventListener('change', function(){ f1.submit(); }); }
-            var f2=document.getElementById('ptsb-next-per-form');
-            if(f2){ var i=f2.querySelector('input[name="per_next"]'); i&&i.addEventListener('change', function(){ f2.submit(); }); }
-          })();
-          
-JS,
-    'script_16' => <<<'JS'
-            (function(){
-              var i=document.getElementById('ptsb-next-pager-input');
-              if(!i) return;
-              function go(){
-                var v = Math.max(1, parseInt(i.value,10)||1);
-                var url = new URL('<?php echo esc_js( add_query_arg(['page'=>'pt-simple-backup','tab'=>'next','per_next'=>$per_next,'page_next'=>'__P__'] + ($next_date ? ['next_date'=>$next_date] : []), admin_url('tools.php')) ); ?>'.replace('__P__', v));
-                location.href = url.toString();
-              }
-              i.addEventListener('change', go);
-              i.addEventListener('keyup', function(e){ if(e.key==='Enter'){ go(); }});
-            })();
-          
-JS,
-    'script_17' => <<<'JS'
-(function(){
-  var f=document.getElementById('ptsb-last-filter-form');
-  if(f){ f.addEventListener('change', function(){ f.submit(); }); }
 
-  var g=document.getElementById('ptsb-last-per-form');
-  if(g){
-    var i=g.querySelector('input[name="per_last"]');
-    if(i){ i.addEventListener('change', function(){ g.submit(); }); }
-  }
-})();
-JS,
-    'script_18' => <<<'JS'
-        (function(){
-          var i=document.getElementById('ptsb-last-pager-input');
-          if(!i) return;
-          function go(){
-            var min=parseInt(i.min,10)||1, max=parseInt(i.max,10)||1;
-            var v = Math.max(min, Math.min(max, parseInt(i.value,10)||min));
-            location.href = '<?php echo esc_js( add_query_arg([
-  'page'=>'pt-simple-backup','tab'=>'last',
-  'per_last'=>$per_last,'page_last'=>'__P__',
-  'last_exp'=>(int)$last_exp,'last_ok'=>(int)$last_ok
-], admin_url('tools.php')) ); ?>'.replace('__P__', v);
-
+      if (mode === 'weekly') {
+        const guard = form.querySelector('input[name="wk_days_guard"]');
+        const hasDay = !!section.querySelector('.ptsb-chip.active');
+        if (guard) {
+          if (!hasDay) {
+            guard.value = '';
+            guard.removeAttribute('disabled');
+            guard.setCustomValidity('Selecione pelo menos 1 dia da semana.');
+            event.preventDefault();
+            guard.reportValidity();
+            guard.setAttribute('disabled', 'disabled');
+            return;
           }
-          i.addEventListener('change', go);
-          i.addEventListener('keyup', function(e){ if(e.key==='Enter'){ go(); }});
-        })();
-      
-JS,
-    'script_19' => <<<'JS'
-  (function(){
-    const ajaxUrl = window.ajaxurl || "<?php echo esc_js( admin_url('admin-ajax.php') ); ?>";
-    const nonce   = "<?php echo esc_js($nonce); ?>";
-    const logEl   = document.getElementById('ptsb-log');
-    if(!logEl) return;
+          guard.value = 'ok';
+          guard.removeAttribute('disabled');
+          guard.setCustomValidity('');
+          guard.setAttribute('disabled', 'disabled');
+        }
+      }
+    }, true);
+  }
+
+  function initNextForms() {
+    const dateForm = document.getElementById('ptsb-next-date-form');
+    if (dateForm) {
+      const dateInput = dateForm.querySelector('input[name="next_date"]');
+      if (dateInput) {
+        dateInput.addEventListener('change', () => dateForm.submit());
+      }
+    }
+
+    const perForm = document.getElementById('ptsb-next-per-form');
+    if (perForm) {
+      const perInput = perForm.querySelector('input[name="per_next"]');
+      if (perInput) {
+        perInput.addEventListener('change', () => perForm.submit());
+      }
+    }
+  }
+
+  function initNextPager() {
+    const input = document.getElementById('ptsb-next-pager-input');
+    if (!input || !urls.nextPager) return;
+
+    function go() {
+      const value = Math.max(1, parseInt(input.value, 10) || 1);
+      window.location.href = urls.nextPager.replace('__PAGE__', value);
+    }
+
+    input.addEventListener('change', go);
+    input.addEventListener('keyup', function (event) {
+      if (event.key === 'Enter') go();
+    });
+  }
+
+  function initLastForms() {
+    const filterForm = document.getElementById('ptsb-last-filter-form');
+    if (filterForm) {
+      filterForm.addEventListener('change', () => filterForm.submit());
+    }
+
+    const perForm = document.getElementById('ptsb-last-per-form');
+    if (perForm) {
+      const input = perForm.querySelector('input[name="per_last"]');
+      if (input) {
+        input.addEventListener('change', () => perForm.submit());
+      }
+    }
+  }
+
+  function initLastPager() {
+    const input = document.getElementById('ptsb-last-pager-input');
+    if (!input || !urls.lastPager) return;
+
+    function go() {
+      const min = parseInt(input.min, 10) || 1;
+      const max = parseInt(input.max, 10) || Math.max(min, 1);
+      const value = Math.max(min, Math.min(max, parseInt(input.value, 10) || min));
+      window.location.href = urls.lastPager.replace('__PAGE__', value);
+    }
+
+    input.addEventListener('change', go);
+    input.addEventListener('keyup', function (event) {
+      if (event.key === 'Enter') go();
+    });
+  }
+
+  function initLogPoller() {
+    const logEl = document.getElementById('ptsb-log');
+    if (!logEl || !ajaxUrl || !nonce) return;
 
     let lastLog = logEl.textContent || '';
     let autoStick = true;
-    logEl.addEventListener('scroll', function(){
+
+    logEl.addEventListener('scroll', function () {
       const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 24;
       autoStick = nearBottom;
     });
 
-    function renderLog(txt){
-      if(txt === lastLog) return;
+    function renderLog(text) {
+      if (text === lastLog) return;
       const shouldStick = autoStick;
-      logEl.textContent = txt;
-      if(shouldStick){ requestAnimationFrame(()=>{ logEl.scrollTop = logEl.scrollHeight; }); }
-      lastLog = txt;
+      logEl.textContent = text;
+      if (shouldStick) {
+        window.requestAnimationFrame(() => {
+          logEl.scrollTop = logEl.scrollHeight;
+        });
+      }
+      lastLog = text;
     }
 
-    function poll(){
-      const body = new URLSearchParams({action:'ptsb_status', nonce:nonce}).toString();
-      fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})
-        .then(r=>r.json()).then(res=>{
-          if(!res || !res.success) return;
-          const s   = res.data || {};
-          const txt = (s.log && String(s.log).trim()) ? s.log : '(sem linhas)';
-          renderLog(txt);
-        }).catch(()=>{});
+    function poll() {
+      const params = new URLSearchParams({ action: 'ptsb_status', nonce });
+      fetch(ajaxUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      })
+        .then(resp => resp.json())
+        .then(res => {
+          if (!res || !res.success) return;
+          const status = res.data || {};
+          const text = status.log && String(status.log).trim() ? status.log : '(sem linhas)';
+          renderLog(text);
+        })
+        .catch(() => {
+          /* silent */
+        });
     }
-    poll(); setInterval(poll, 2000);
-  })();
-  
-JS,
-];
+
+    poll();
+    window.setInterval(poll, 2000);
+  }
+
+  ready(function () {
+    initHydrateTable();
+    initBackupPager();
+    initManualBackupForm();
+    initProgressPoll();
+    initRenameButtons();
+    initCycleLettersForm();
+    initCycleKeepForever();
+    initModeSections();
+    initTimesBuilder();
+    initWeeklyChips();
+    initWindowToggle();
+    initCycleFormValidation();
+    initNextForms();
+    initNextPager();
+    initLastForms();
+    initLastPager();
+    initLogPoller();
+  });
+})(window, document);

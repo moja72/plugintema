@@ -43,14 +43,26 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
     $diag[] = 'backup.sh '.(@is_executable($cfg['script_backup']) ? 'executavel' : 'sem permissao');
     $diag[] = 'restore.sh '.(@is_executable($cfg['script_restore']) ? 'executavel' : 'sem permissao');
 
-    $nonce = wp_create_nonce('ptsb_nonce');
+    $nonce = ptsb_get_nonce();
+
+    $script_data = [
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'nonce'   => $nonce,
+        'prefix'  => $cfg['prefix'],
+        'urls'    => [],
+        'perPage' => [],
+        'filters' => [],
+        'defaults'=> [
+            'letters' => ['D','P','T','W','S','M','O'],
+        ],
+    ];
 
     // Drive (resumo)
   $drive = ptsb_drive_info();
 
-// se vier ?force=1, zera o cache dos totais
+// se vier ?force=1, zera caches relacionados ao Drive
 if (isset($_GET['force']) && (int)$_GET['force'] === 1) {
-    delete_transient('ptsb_totals_v1');
+    ptsb_remote_cache_flush();
 }
 $tot    = ptsb_backups_totals_cached();
 $bk_count       = (int)$tot['count'];
@@ -88,21 +100,6 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
           <a class="<?php echo $cls; ?>" href="<?php echo $url; ?>"><?php echo esc_html($label); ?></a>
         <?php endforeach; ?>
       </h2>
-
-      <?php
-$__ptsb_css = __DIR__ . '/../assets/admin.css';
-if (is_readable($__ptsb_css)) {
-    echo '<style>';
-    readfile($__ptsb_css);
-    echo '</style>';
-}
-?>
-<?php
-static $ptsb_admin_js = null;
-if ($ptsb_admin_js === null) {
-    $ptsb_admin_js = include __DIR__ . '/../assets/admin.js';
-}
-?>
 
       <?php if ($tab === 'backup'): ?>
 
@@ -219,6 +216,14 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
           'paged' => (int) $p
       ], $base_admin) );
   };
+
+  $script_data['perPage']['backup'] = $per;
+  $script_data['urls']['backupPager'] = add_query_arg([
+      'page'  => 'pt-simple-backup',
+      'tab'   => 'backup',
+      'per'   => $per,
+      'paged' => '__PAGE__',
+  ], $base_admin);
 ?>
 
 <!-- Filtro "Exibindo N de M" -->
@@ -233,9 +238,6 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
   </form>
 </div>
 
-<?php
-echo '<script>' . ($ptsb_admin_js['script_1'] ?? '') . '</script>';
-?>
 
 <table class="widefat striped">
 
@@ -364,10 +366,7 @@ echo '<script>' . ($ptsb_admin_js['script_1'] ?? '') . '</script>';
           </tbody>
         </table>
 
-        <?php
-echo '<script>' . ($ptsb_admin_js['script_2'] ?? '') . '</script>';
-?>
-
+        
         
         <?php if ($total_pages > 1): ?>
   <nav class="ptsb-pager" aria-label="Paginação dos backups">
@@ -403,17 +402,11 @@ echo '<script>' . ($ptsb_admin_js['script_2'] ?? '') . '</script>';
     </a>
   </nav>
 
-<?php
-echo '<script>' . ($ptsb_admin_js['script_3'] ?? '') . '</script>';
-?>
 
 <?php endif; ?>
 
 
-        <?php
-echo '<script>' . ($ptsb_admin_js['script_4'] ?? '') . '</script>';
-?>
-
+        
      <?php elseif ($tab === 'cycles'): ?>
 
   <!-- ===== ABA: ROTINAS ===== -->
@@ -466,9 +459,6 @@ echo '<script>' . ($ptsb_admin_js['script_4'] ?? '') . '</script>';
   </label>
 </div>
 
-<?php
-echo '<script>' . ($ptsb_admin_js['script_5'] ?? '') . '</script>';
-?>
 
          <label>Nome da Rotina:
   <input type="text" name="name" value="" required aria-required="true"
@@ -491,9 +481,6 @@ echo '<script>' . ($ptsb_admin_js['script_5'] ?? '') . '</script>';
   <span class="ptsb-keep-txt">Sempre manter</span>
 </div>
 
-<?php
-echo '<script>' . ($ptsb_admin_js['script_6'] ?? '') . '</script>';
-?>
 
 
           <br>
@@ -505,14 +492,8 @@ echo '<script>' . ($ptsb_admin_js['script_6'] ?? '') . '</script>';
     <option value="every_n">Recorrente</option>
     <option value="interval">Intervalo</option>
   </select>
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_7'] ?? '') . '</script>';
-?>
-
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_8'] ?? '') . '</script>';
-?>
-</label>
+  
+  </label>
 
 
           <div data-new="daily">
@@ -520,10 +501,7 @@ echo '<script>' . ($ptsb_admin_js['script_8'] ?? '') . '</script>';
   <input type="number" name="qty" min="1" max="12" value="3" style="width:80px" id="new-daily-qty">
   <div id="new-daily-times" class="ptsb-times-grid"></div>
 
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_9'] ?? '') . '</script>';
-?>
-</div>
+  </div>
 
           <div data-new="weekly" style="display:none">
 <div class="ptsb-inline-field" style="margin-top:8px">Quantos horários por dia?</div>
@@ -549,17 +527,11 @@ echo '<script>' . ($ptsb_admin_js['script_9'] ?? '') . '</script>';
 
 
 
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_10'] ?? '') . '</script>';
-?>
-
+  
   
 
 
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_11'] ?? '') . '</script>';
-?>
-</div>
+  </div>
 
 
 
@@ -577,10 +549,7 @@ echo '<script>' . ($ptsb_admin_js['script_11'] ?? '') . '</script>';
 <div id="new-everyn-times" class="ptsb-times-grid"></div>
 
 
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_12'] ?? '') . '</script>';
-?>
-
+  
   
 
 </div>
@@ -611,9 +580,6 @@ echo '<script>' . ($ptsb_admin_js['script_12'] ?? '') . '</script>';
   </label>
 </div>
 
-<?php
-echo '<script>' . ($ptsb_admin_js['script_13'] ?? '') . '</script>';
-?>
 
 
 
@@ -750,10 +716,7 @@ $nx    = $next1 ? esc_html($next1[0]['dt']->format('d/m/Y H:i')) : '(—)';
           </tbody>
         </table>
 
-        <?php
-echo '<script>' . ($ptsb_admin_js['script_14'] ?? '') . '</script>';
-?>
-    
+            
 
           <?php elseif ($tab === 'next'): ?>
 
@@ -822,6 +785,19 @@ echo '<script>' . ($ptsb_admin_js['script_14'] ?? '') . '</script>';
             if ($date) $args['next_date'] = $date;
             return esc_url( add_query_arg($args, $base_admin) );
         };
+
+        $script_data['perPage']['next'] = $per_next;
+        $script_data['filters']['nextDate'] = $next_date;
+        $nextArgs = [
+            'page'      => 'pt-simple-backup',
+            'tab'       => 'next',
+            'per_next'  => $per_next,
+            'page_next' => '__PAGE__',
+        ];
+        if ($next_date !== '') {
+            $nextArgs['next_date'] = $next_date;
+        }
+        $script_data['urls']['nextPager'] = add_query_arg($nextArgs, $base_admin);
         ?>
 
         <h2 style="margin-top:8px">Próximas Execuções</h2>
@@ -862,10 +838,7 @@ echo '<script>' . ($ptsb_admin_js['script_14'] ?? '') . '</script>';
             </form>
           </div>
 
-          <?php
-echo '<script>' . ($ptsb_admin_js['script_15'] ?? '') . '</script>';
-?>
-
+          
           <table class="widefat striped">
             <thead>
               <tr>
@@ -943,10 +916,7 @@ echo '<script>' . ($ptsb_admin_js['script_15'] ?? '') . '</script>';
             </a>
           </nav>
 
-          <?php
-echo '<script>' . ($ptsb_admin_js['script_16'] ?? '') . '</script>';
-?>
-
+          
         <?php endif; ?>
 
 
@@ -1011,6 +981,18 @@ $make_url_l = function($p, $per) use ($base_admin, $last_exp, $last_ok) {
   ], $base_admin) );
 };
 
+$script_data['perPage']['last'] = $per_last;
+$script_data['filters']['lastExp'] = (int) $last_exp;
+$script_data['filters']['lastOk']  = (int) $last_ok;
+$script_data['urls']['lastPager'] = add_query_arg([
+    'page'      => 'pt-simple-backup',
+    'tab'       => 'last',
+    'per_last'  => $per_last,
+    'page_last' => '__PAGE__',
+    'last_exp'  => (int) !!$last_exp,
+    'last_ok'   => (int) !!$last_ok,
+], $base_admin);
+
 
   ?>
 
@@ -1057,9 +1039,6 @@ $make_url_l = function($p, $per) use ($base_admin, $last_exp, $last_ok) {
   </form>
 </div>
 
-<?php
-echo '<script>' . ($ptsb_admin_js['script_17'] ?? '') . '</script>';
-?>
 
 
     <table class="widefat striped">
@@ -1163,10 +1142,7 @@ echo '<script>' . ($ptsb_admin_js['script_17'] ?? '') . '</script>';
         </a>
       </nav>
 
-      <?php
-echo '<script>' . ($ptsb_admin_js['script_18'] ?? '') . '</script>';
-?>
-    <?php endif; ?>
+          <?php endif; ?>
 
   <?php endif; // rows_last ?>
 
@@ -1199,13 +1175,11 @@ echo '<script>' . ($ptsb_admin_js['script_18'] ?? '') . '</script>';
   ?></pre>
   <p><small>Mostrando as últimas 50 linhas. A rotação cria <code>backup-wp.log.1</code>, <code>.2</code>… até <?php echo (int)$cfg['log_keep']; ?>.</small></p>
 
-  <?php
-echo '<script>' . ($ptsb_admin_js['script_19'] ?? '') . '</script>';
-?>
-
+  
       <?php endif; // fim roteamento abas ?>
     </div>
     <?php
+    wp_localize_script('ptsb-admin', 'ptsbAdminData', $script_data);
     settings_errors('ptsb');
 }
 
