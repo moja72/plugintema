@@ -2516,24 +2516,28 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
         $is_expired = ($ri['x'] >= $ri['y']);
     }
     
-    $tr_class = $is_expired ? ' class="ptsb-expired"' : '';
 ?>
-  
+
 <?php
-  $time = $r['time']; 
-  $file = $r['file']; 
+  $time = $r['time'];
+  $file = $r['file'];
   $size = (int)($r['size'] ?? 0);
   $is_kept = !empty($keepers[$file]); // mantém só o mapa .keep (1 listagem rclone)
+  $row_classes = [];
+  if ($is_expired) $row_classes[] = 'ptsb-expired';
 ?>
-<tr data-file="<?php echo esc_attr($file); ?>" 
-    data-time="<?php echo esc_attr($time); ?>" 
+<tr<?php echo $row_classes ? ' class="'.esc_attr(implode(' ', $row_classes)).'"' : ''; ?>
+    data-file="<?php echo esc_attr($file); ?>"
+    data-time="<?php echo esc_attr($time); ?>"
     data-kept="<?php echo $is_kept ? 1 : 0; ?>">
 
   <td><?php echo esc_html( ptsb_fmt_local_dt($time) ); ?></td>
 
   <td>
     <span class="ptsb-filename"><?php echo esc_html($file); ?></span>
-    <!-- o badge “vencido” será inserido via JS, se for o caso -->
+    <?php if ($is_expired): ?>
+      <span class="ptsb-tag vencido">vencido</span>
+    <?php endif; ?>
     <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>"
           class="ptsb-rename-form" style="display:inline">
       <?php wp_nonce_field('ptsb_nonce'); ?>
@@ -2548,18 +2552,37 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
     </form>
   </td>
 
-  <!-- ROTINA (placeholder) -->
-  <td class="ptsb-col-rotina"><span class="description">carregando…</span></td>
+  <td class="ptsb-col-rotina">
+    <?php if ($rotina_label !== ''): ?>
+      <span class="ptsb-rotina"><?php echo esc_html($rotina_label); ?></span>
+    <?php else: ?>
+      <span class="description">—</span>
+    <?php endif; ?>
+  </td>
 
-  <!-- BACKUP (letras; placeholder) -->
   <td class="ptsb-col-letters" aria-label="Partes incluídas">
-    <span class="description">carregando…</span>
+    <?php foreach ($letters as $L): $meta = ptsb_letter_meta($L); ?>
+      <span class="ptsb-mini" title="<?php echo esc_attr($meta['label']); ?>">
+        <span class="dashicons <?php echo esc_attr($meta['class']); ?>"></span>
+      </span>
+    <?php endforeach; ?>
   </td>
 
   <td><?php echo esc_html( ptsb_hsize($size) ); ?></td>
 
-  <!-- RETENÇÃO (placeholder; “sempre”, X/Y ou “—”) -->
-  <td class="ptsb-col-ret"><span class="description">carregando…</span></td>
+  <td class="ptsb-col-ret">
+    <?php
+    if ($is_kept || $keepDays === 0) {
+        echo '<span class="ptsb-ret sempre" title="Sempre manter">sempre</span>';
+    } elseif (is_int($keepDays) && $keepDays > 0) {
+        $ri = $ri ?? ptsb_retention_calc($time, $keepDays);
+        echo '<span class="ptsb-ret" title="'.esc_attr('Dia '.$ri['x'].' de '.$ri['y']).'">'
+           .esc_html($ri['x'].'/'.$ri['y']).'</span>';
+    } else {
+        echo '<span class="description">—</span>';
+    }
+    ?>
+  </td>
 
   <!-- AÇÕES (inalterado) -->
   <td class="ptsb-actions">
