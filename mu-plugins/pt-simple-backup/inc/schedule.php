@@ -918,7 +918,7 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     // guarda as partes usadas neste disparo (fallback para a notificação)
     update_option('ptsb_last_run_parts', (string)$partsCsv, true);
 
-    $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
+    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
 
     $result = shell_exec($cmd);
@@ -957,7 +957,7 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
          . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
          . 'PARTS='      . escapeshellarg($partsCsv);
 
-    $cmd = '/usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
+    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
     $result = shell_exec($cmd);
     $pid    = 0;
