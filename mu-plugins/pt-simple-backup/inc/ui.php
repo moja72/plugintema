@@ -111,6 +111,16 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
            Escolha quais partes do site incluir no backup. Para um backup completo, mantenha todos selecionados.
           </p>
 
+        <?php
+          $manual_job      = ptsb_manual_job_get();
+          $manual_status   = (string)($manual_job['status'] ?? 'idle');
+          $manual_message  = ptsb_manual_job_message($manual_job);
+          $manual_idle_msg = ptsb_manual_job_message(['status'=>'idle']);
+          $script_data['manualStatus'] = [
+              'idleMessage' => $manual_idle_msg,
+          ];
+        ?>
+
         <!-- Disparar manual -->
         <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>" id="ptsb-now-form" style="margin:12px 0;">
           <?php wp_nonce_field('ptsb_nonce'); ?>
@@ -172,9 +182,13 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
           </div>
 
          <div class="ptsb-btns" style="margin-top: 18px;">
-  <button class="button button-primary">Fazer backup agora</button>
+  <button class="button button-primary">Agendar execu&ccedil;&atilde;o imediata</button>
   <a class="button" target="_blank" rel="noopener" href="<?php echo esc_url($cfg['drive_url']); ?>">Ver no Drive</a>
 </div>
+
+        <p id="ptsb-manual-status" class="ptsb-manual-status" data-state="<?php echo esc_attr($manual_status); ?>" data-default-message="<?php echo esc_attr($manual_idle_msg); ?>">
+          <?php echo esc_html($manual_message); ?>
+        </p>
 
         </form>
 

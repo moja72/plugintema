@@ -49,5 +49,6 @@ add_action('wp_ajax_ptsb_status', function () {
         'percent' => (int)$percent,
         'stage'   => (string)$stage,
         'log'     => (string)$tail,
+        'job'     => ptsb_manual_job_response_payload(),
     ]);
 });

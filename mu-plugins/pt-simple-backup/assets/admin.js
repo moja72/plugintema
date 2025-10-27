@@ -10,6 +10,7 @@
   const urls = data.urls || {};
   const perPage = data.perPage || {};
   const filters = data.filters || {};
+  const manualStatusDefaults = data.manualStatus || {};
 
   function ready(fn) {
     if (document.readyState === 'loading') {
@@ -191,10 +192,12 @@
     const box = document.getElementById('ptsb-progress');
     const bar = document.getElementById('ptsb-progress-bar');
     const text = document.getElementById('ptsb-progress-text');
+    const manualStatus = document.getElementById('ptsb-manual-status');
     if (!box || !bar || !text || !ajaxUrl || !nonce) return;
 
     let wasRunning = false;
     let didReload = false;
+    const manualIdleMessage = manualStatusDefaults.idleMessage || (manualStatus ? manualStatus.dataset.defaultMessage || '' : '');
 
     function poll() {
       const params = new URLSearchParams({ action: 'ptsb_status', nonce });
@@ -207,6 +210,22 @@
         .then(res => {
           if (!res || !res.success) return;
           const status = res.data || {};
+          const job = status.job || {};
+
+          if (manualStatus) {
+            const state = job.status || 'idle';
+            manualStatus.dataset.state = state;
+            let message = typeof job.message === 'string' ? job.message : '';
+            if (!message) {
+              if (state === 'idle') {
+                message = manualIdleMessage || manualStatus.dataset.defaultMessage || '';
+              } else {
+                message = manualStatus.textContent || manualStatus.dataset.defaultMessage || '';
+              }
+            }
+            manualStatus.textContent = message;
+          }
+
           if (status.running) {
             wasRunning = true;
             box.style.display = 'block';
