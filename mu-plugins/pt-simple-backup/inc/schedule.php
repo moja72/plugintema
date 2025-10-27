@@ -571,7 +571,10 @@ add_action('ptsb_run_manual_backup', function($job_id){
         return;
     }
 
-    if (file_exists($cfg['lock'])) {
+    $lockActive = ptsb_lock_is_active();
+    $fileLock   = file_exists($cfg['lock']);
+
+    if ($lockActive || $fileLock) {
         $job['status']   = 'waiting_lock';
         $job['message']  = 'Aguardando outro backup finalizar para iniciar.';
         $job['attempts'] = (int)$job['attempts'] + 1;
