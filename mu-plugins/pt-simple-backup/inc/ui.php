@@ -1055,11 +1055,10 @@ $script_data['urls']['lastPager'] = add_query_arg([
     <input type="hidden" name="last_exp" value="<?php echo (int)$last_exp; ?>">
     <input type="hidden" name="last_ok"  value="<?php echo (int)$last_ok; ?>">
 
-    <span>Exibindo</span>
+    <?php $shown_last = count($rows_last); ?>
+    <span>Exibindo <?php echo esc_html( number_format_i18n($shown_last) ); ?> de <?php echo esc_html( number_format_i18n($total_last) ); ?> execuções — página <?php echo esc_html( number_format_i18n($page_last) ); ?> de <?php echo esc_html( number_format_i18n($total_pages_l) ); ?> — mostrar</span>
     <input type="number" name="per_last" min="1" max="500"
            value="<?php echo (int)$per_last; ?>" style="width:auto">
-    <span>de <?php echo (int)$total_last; ?> execuções — página
-      <?php echo (int)$page_last; ?> de <?php echo (int)$total_pages_l; ?></span>
   </form>
 </div>
 
