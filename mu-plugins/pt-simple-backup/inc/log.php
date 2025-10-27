@@ -301,6 +301,13 @@ function ptsb_maybe_notify_backup_done() {
         $intent_kdays   = isset($intent['keep_days']) ? (int)$intent['keep_days'] : (int)ptsb_settings()['keep_days'];
         $intent_forever = !empty($intent['keep_forever']) || $intent_kdays === 0;
         $intent_origin  = (string)($intent['origin'] ?? '');
+        $intent_queue   = (string)($intent['queue_id'] ?? '');
+        $intent_chunk_id= (string)($intent['chunk_id'] ?? '');
+        $intent_chunk_ix= isset($intent['chunk_index']) ? (int)$intent['chunk_index'] : 0;
+        $intent_chunks_tot = isset($intent['chunks_total']) ? (int)$intent['chunks_total'] : 1;
+        $intent_chunk_label = (string)($intent['chunk_label'] ?? '');
+        $intent_chunk_subset= (string)($intent['chunk_subset'] ?? '');
+        $intent_chunk_parts = (string)($intent['chunk_parts'] ?? '');
 
         // manifest existente (se houver)
         $man = ptsb_manifest_read($latest['file']);
@@ -341,6 +348,12 @@ function ptsb_maybe_notify_backup_done() {
             'parts'        => $partsCsv,
             'letters'      => $letters,
             'routine_mode' => $routine_mode,
+            'queue_id'     => $intent_queue,
+            'chunk_id'     => $intent_chunk_id,
+            'chunk_index'  => $intent_chunk_ix,
+            'chunks_total' => $intent_chunks_tot,
+            'chunk_label'  => $intent_chunk_label,
+            'chunk_subset' => $intent_chunk_subset,
         ];
         ptsb_manifest_write($latest['file'], $manAdd, true);
 
@@ -362,6 +375,13 @@ function ptsb_maybe_notify_backup_done() {
             'routine_mode'       => $routine_mode,
             'keep_forever'       => ($keepDays === 0 ? 1 : 0),
             'job_id'             => (string)($intent['job_id'] ?? ''),
+            'queue_id'           => $intent_queue,
+            'chunk_id'           => $intent_chunk_id,
+            'chunk_index'        => $intent_chunk_ix,
+            'chunks_total'       => $intent_chunks_tot,
+            'chunk_label'        => $intent_chunk_label,
+            'chunk_subset'       => $intent_chunk_subset,
+            'chunk_parts'        => ($intent_chunk_parts !== '' ? $intent_chunk_parts : $partsCsv),
         ];
 
         // dispara o evento; outro plugin/integração cuida de enviar e-mails

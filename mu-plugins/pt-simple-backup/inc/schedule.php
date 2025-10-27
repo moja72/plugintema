@@ -223,6 +223,7 @@ function ptsb_manual_job_response_payload(): array {
         'started_at'  => (int)$job['started_at'],
         'finished_at' => (int)$job['finished_at'],
         'attempts'    => (int)$job['attempts'],
+        'queue'       => ptsb_backup_queue_public_payload(),
     ];
 }
 
@@ -255,6 +256,13 @@ function ptsb_manual_job_mark_completed(array $payload): void {
         return;
     }
 
+    $queue = ptsb_backup_queue_get();
+    if (!empty($queue['id']) && (string)$queue['job_id'] === (string)$job['id']) {
+        if (($queue['status'] ?? '') !== 'completed') {
+            return;
+        }
+    }
+
     $finished_at = time();
     $finished_iso = isset($payload['finished_at_iso']) ? (string)$payload['finished_at_iso'] : '';
     if ($finished_iso !== '') {
@@ -276,6 +284,531 @@ function ptsb_manual_job_mark_completed(array $payload): void {
     $job['finished_at'] = (int)$finished_at;
     ptsb_manual_job_save($job);
 }
+
+/* -------------------------------------------------------
+ * Fila de chunks (quebra o backup em etapas menores)
+ * -----------------------------------------------------*/
+
+function ptsb_backup_queue_option_key(): string {
+    return 'ptsb_backup_queue_v1';
+}
+
+function ptsb_backup_queue_default(): array {
+    return [
+        'id'                    => '',
+        'status'                => 'idle',
+        'parts_original'        => '',
+        'chunks'                => [],
+        'total'                 => 0,
+        'completed'             => 0,
+        'current_index'         => 0,
+        'current_chunk_id'      => '',
+        'prefix'                => '',
+        'keep_days'             => null,
+        'keep_forever'          => 0,
+        'job_id'                => '',
+        'origin'                => '',
+        'override_prefix'       => '',
+        'override_days'         => null,
+        'started_at'            => 0,
+        'last_chunk_started_at' => 0,
+        'last_completed_at'     => 0,
+        'lock_token'            => '',
+        'current_pid'           => 0,
+        'retry_at'              => 0,
+        'error'                 => '',
+    ];
+}
+
+function ptsb_backup_queue_get(): array {
+    $state = get_option(ptsb_backup_queue_option_key(), []);
+    if (!is_array($state)) {
+        $state = [];
+    }
+    $state = wp_parse_args($state, ptsb_backup_queue_default());
+    if (!is_array($state['chunks'])) {
+        $state['chunks'] = [];
+    }
+    $state['chunks'] = array_values(array_filter($state['chunks'], fn($c) => is_array($c) && !empty($c['parts'])));
+    $state['total']  = count($state['chunks']);
+    $state['completed'] = min(max(0, (int)$state['completed']), $state['total']);
+    $state['current_index'] = max(0, min((int)$state['current_index'], max(0, $state['total'] - 1)));
+    return $state;
+}
+
+function ptsb_backup_queue_save(array $state): void {
+    update_option(ptsb_backup_queue_option_key(), $state, false);
+}
+
+function ptsb_backup_queue_clear(): void {
+    delete_option(ptsb_backup_queue_option_key());
+}
+
+function ptsb_backup_queue_is_active(): bool {
+    $queue = ptsb_backup_queue_get();
+    return !empty($queue['id']) && !empty($queue['chunks']) && !in_array($queue['status'], ['idle','completed','failed'], true);
+}
+
+function ptsb_backup_queue_public_payload(): array {
+    $queue = ptsb_backup_queue_get();
+    if (empty($queue['id']) || empty($queue['chunks'])) {
+        return [];
+    }
+
+    $idx = (int) $queue['current_index'];
+    $current = $queue['chunks'][$idx] ?? [];
+
+    return [
+        'id'             => (string) $queue['id'],
+        'status'         => (string) $queue['status'],
+        'total'          => (int) $queue['total'],
+        'completed'      => (int) $queue['completed'],
+        'current_index'  => $idx,
+        'current_label'  => (string) ($current['label'] ?? ''),
+        'current_key'    => (string) ($current['key'] ?? ''),
+        'last_started_at'=> (int) $queue['last_chunk_started_at'],
+        'last_completed_at'=> (int) $queue['last_completed_at'],
+    ];
+}
+
+function ptsb_backup_queue_make_chunk(string $key, array $parts, string $label, array $extra = []): array {
+    $parts = array_values(array_filter(array_map('trim', $parts)));
+    $parts = array_values(array_unique($parts));
+    $partsStr = implode(',', $parts);
+    $chunk = [
+        'key'     => $key,
+        'label'   => $label,
+        'parts'   => $partsStr,
+        'letters' => ptsb_parts_to_letters($partsStr),
+        'env'     => [],
+        'subset'  => '',
+        'weight'  => 1,
+    ];
+    foreach ($extra as $k => $v) {
+        $chunk[$k] = $v;
+    }
+    return $chunk;
+}
+
+function ptsb_backup_queue_build_upload_chunks(): array {
+    if (!function_exists('wp_upload_dir')) {
+        return [ptsb_backup_queue_make_chunk('uploads', ['uploads'], 'Uploads')];
+    }
+
+    $uploads = wp_upload_dir();
+    if (!empty($uploads['error']) || empty($uploads['basedir'])) {
+        return [ptsb_backup_queue_make_chunk('uploads', ['uploads'], 'Uploads')];
+    }
+
+    $base = rtrim((string) $uploads['basedir'], '/');
+    if ($base === '' || !is_dir($base)) {
+        return [ptsb_backup_queue_make_chunk('uploads', ['uploads'], 'Uploads')];
+    }
+
+    $monthDirs = glob($base . '/[0-9][0-9][0-9][0-9]/[0-9][0-9]', GLOB_ONLYDIR) ?: [];
+    $monthEntries = [];
+    foreach ($monthDirs as $dir) {
+        $rel = trim(str_replace($base, '', $dir), '/');
+        if ($rel === '') continue;
+        [$year, $month] = array_pad(explode('/', $rel, 2), 2, '');
+        if (!preg_match('/^\d{4}$/', $year) || !preg_match('/^\d{2}$/', $month)) {
+            continue;
+        }
+        $slice = $year . '-' . $month;
+        if (!isset($monthEntries[$slice])) {
+            $monthEntries[$slice] = [];
+        }
+        $monthEntries[$slice][] = $rel;
+    }
+
+    if (!$monthEntries) {
+        return [ptsb_backup_queue_make_chunk('uploads', ['uploads'], 'Uploads')];
+    }
+
+    ksort($monthEntries, SORT_STRING);
+    $monthList = [];
+    foreach ($monthEntries as $slice => $paths) {
+        $monthList[] = [
+            'slice' => $slice,
+            'paths' => array_values(array_unique($paths)),
+        ];
+    }
+
+    $limit = max(1, (int) apply_filters('ptsb_upload_month_chunk_limit', 12));
+    $totalMonths = count($monthList);
+    $older = [];
+    if ($totalMonths > $limit) {
+        $older = array_slice($monthList, 0, $totalMonths - $limit);
+        $monthList = array_slice($monthList, $totalMonths - $limit);
+    }
+
+    $chunks = [];
+    $yearGroups = [];
+    foreach ($older as $entry) {
+        $year = substr($entry['slice'], 0, 4);
+        if (!isset($yearGroups[$year])) {
+            $yearGroups[$year] = [];
+        }
+        foreach ($entry['paths'] as $path) {
+            $yearGroups[$year][] = $path;
+        }
+    }
+
+    foreach ($yearGroups as $year => $paths) {
+        $paths = array_values(array_unique($paths));
+        $chunks[] = ptsb_backup_queue_make_chunk('uploads-year', ['uploads'], sprintf('Uploads %s', $year), [
+            'subset' => $year,
+            'env'    => [
+                'PTS_UPLOADS_MODE'  => 'year',
+                'PTS_UPLOADS_VALUE' => $year,
+                'PTS_UPLOADS_PATHS' => implode(',', $paths),
+            ],
+            'paths'  => $paths,
+        ]);
+    }
+
+    foreach ($monthList as $entry) {
+        $label = sprintf('Uploads %s', str_replace('-', '/', $entry['slice']));
+        $chunks[] = ptsb_backup_queue_make_chunk('uploads-month', ['uploads'], $label, [
+            'subset' => $entry['slice'],
+            'env'    => [
+                'PTS_UPLOADS_MODE'  => 'month',
+                'PTS_UPLOADS_VALUE' => $entry['slice'],
+                'PTS_UPLOADS_PATHS' => implode(',', $entry['paths']),
+            ],
+            'paths'  => $entry['paths'],
+        ]);
+    }
+
+    return $chunks ?: [ptsb_backup_queue_make_chunk('uploads', ['uploads'], 'Uploads')];
+}
+
+function ptsb_backup_queue_build_chunks(string $partsCsv): array {
+    $parts = array_values(array_filter(array_map('trim', explode(',', strtolower($partsCsv)))));
+    if (!$parts) {
+        return [];
+    }
+
+    $parts = array_values(array_unique($parts));
+    $set = array_fill_keys($parts, true);
+    $chunks = [];
+
+    $coreParts = [];
+    foreach (['db', 'core', 'scripts', 'langs', 'config', 'others'] as $p) {
+        if (!empty($set[$p])) {
+            $coreParts[] = $p;
+            unset($set[$p]);
+        }
+    }
+    if ($coreParts) {
+        $chunks[] = ptsb_backup_queue_make_chunk('core', $coreParts, 'Núcleo');
+    }
+
+    foreach (['themes' => 'Temas', 'plugins' => 'Plugins'] as $part => $label) {
+        if (!empty($set[$part])) {
+            $chunks[] = ptsb_backup_queue_make_chunk($part, [$part], $label);
+            unset($set[$part]);
+        }
+    }
+
+    if (!empty($set['uploads'])) {
+        foreach (ptsb_backup_queue_build_upload_chunks() as $chunk) {
+            $chunks[] = $chunk;
+        }
+        unset($set['uploads']);
+    }
+
+    $remaining = array_keys(array_filter($set));
+    if ($remaining) {
+        $chunks[] = ptsb_backup_queue_make_chunk('misc', $remaining, 'Outros');
+    }
+
+    return apply_filters('ptsb_backup_queue_chunks', $chunks, $parts, $partsCsv);
+}
+
+function ptsb_backup_queue_schedule_retry(int $seconds = 30): void {
+    if ($seconds < 1) {
+        $seconds = 5;
+    }
+    if (!wp_next_scheduled('ptsb_run_queue_chunk')) {
+        wp_schedule_single_event(time() + $seconds, 'ptsb_run_queue_chunk');
+    }
+}
+
+function ptsb_backup_queue_update_manual_status(array $queue, ?array $chunk, string $state = 'running'): void {
+    $jobId = (string)($queue['job_id'] ?? '');
+    if ($jobId === '') {
+        return;
+    }
+
+    $job = ptsb_manual_job_get();
+    if ((string)$job['id'] !== $jobId) {
+        return;
+    }
+
+    if ($state === 'running' && $chunk) {
+        $step = (int)$queue['completed'] + 1;
+        $total = max(1, (int)$queue['total']);
+        $job['status']  = 'running';
+        $job['message'] = sprintf('Executando etapa %d de %d (%s).', $step, $total, (string)($chunk['label'] ?? 'Parte'));
+    } elseif ($state === 'waiting') {
+        $job['message'] = 'Aguardando próxima etapa do backup.';
+    } elseif ($state === 'failed') {
+        $job['status']  = 'failed';
+        $job['message'] = (string)($queue['error'] ?: 'Falha ao executar o backup.');
+        $job['finished_at'] = time();
+    }
+
+    ptsb_manual_job_save($job);
+}
+
+function ptsb_backup_queue_mark_failed(array $queue, string $message): void {
+    $queue['status'] = 'failed';
+    $queue['error']  = $message;
+    if (!empty($queue['lock_token'])) {
+        ptsb_lock_release((string)$queue['lock_token']);
+    } else {
+        ptsb_lock_release();
+    }
+    $queue['lock_token'] = '';
+    $queue['current_pid'] = 0;
+    ptsb_backup_queue_save($queue);
+    ptsb_backup_queue_update_manual_status($queue, null, 'failed');
+    ptsb_log('[queue] Falha: ' . $message);
+}
+
+function ptsb_backup_queue_begin(string $partsCsv, string $prefix, int $keepDays, array $context = []): bool {
+    $chunks = array_values(array_filter(ptsb_backup_queue_build_chunks($partsCsv), fn($c) => !empty($c['parts'])));
+    if (count($chunks) <= 1) {
+        return false;
+    }
+
+    $queue = ptsb_backup_queue_default();
+    $queue['id']             = ptsb_uuid4();
+    $queue['status']         = 'pending';
+    $queue['parts_original'] = $partsCsv;
+    $queue['chunks']         = [];
+    $queue['total']          = count($chunks);
+    $queue['prefix']         = $prefix;
+    $queue['keep_days']      = $keepDays;
+    $queue['keep_forever']   = !empty($context['keep_forever']) ? 1 : 0;
+    $queue['job_id']         = (string)($context['job_id'] ?? '');
+    $queue['origin']         = (string)($context['origin'] ?? '');
+    $queue['override_prefix']= (string)($context['override_prefix'] ?? '');
+    $queue['override_days']  = $context['override_days'] ?? null;
+    $queue['started_at']     = time();
+    $idx = 0;
+    foreach ($chunks as $chunk) {
+        $chunk['id'] = sprintf('chunk-%02d', ++$idx);
+        $queue['chunks'][] = $chunk;
+    }
+
+    ptsb_backup_queue_save($queue);
+    update_option('ptsb_last_run_parts', (string)$partsCsv, true);
+    ptsb_log('[queue] Iniciando backup em ' . $queue['total'] . ' etapas.');
+    ptsb_backup_queue_run_chunk($queue, true);
+    return true;
+}
+
+function ptsb_backup_queue_run_chunk(?array $queue = null, bool $force = false): bool {
+    $queue = $queue ?: ptsb_backup_queue_get();
+    if (empty($queue['id']) || empty($queue['chunks'])) {
+        return false;
+    }
+
+    if (!ptsb_can_shell()) {
+        ptsb_backup_queue_mark_failed($queue, 'shell_exec indisponível.');
+        return false;
+    }
+
+    if (!$force && ptsb_lock_is_active()) {
+        ptsb_backup_queue_schedule_retry(20);
+        return false;
+    }
+
+    $completed = (int)$queue['completed'];
+    if ($completed >= (int)$queue['total']) {
+        return false;
+    }
+
+    $chunk = $queue['chunks'][$completed] ?? null;
+    if (!$chunk) {
+        return false;
+    }
+
+    $lock = ptsb_lock_try_acquire();
+    if (!$lock) {
+        ptsb_backup_queue_schedule_retry(20);
+        return false;
+    }
+
+    $cfg = ptsb_cfg();
+    $keepDays = (int) $queue['keep_days'];
+    $keepDays = max(0, $keepDays);
+    $keepForever = ($queue['keep_forever'] ? 1 : 0);
+    $partsCsv = (string) ($chunk['parts'] ?? $queue['parts_original'] ?? '');
+    if ($partsCsv === '') {
+        $partsCsv = $queue['parts_original'];
+    }
+
+    $envMap = [
+        'PATH'             => '/usr/local/bin:/usr/bin:/bin',
+        'LC_ALL'           => 'C.UTF-8',
+        'LANG'             => 'C.UTF-8',
+        'REMOTE'           => (string) $cfg['remote'],
+        'WP_PATH'          => (string) ABSPATH,
+        'PREFIX'           => (string) $queue['prefix'],
+        'KEEP_DAYS'        => (string) $keepDays,
+        'KEEP'             => (string) $keepDays,
+        'RETENTION_DAYS'   => (string) $keepDays,
+        'RETENTION'        => (string) $keepDays,
+        'KEEP_FOREVER'     => (string) ($keepForever ? 1 : 0),
+        'PARTS'            => (string) $partsCsv,
+        'PTS_QUEUE_ID'     => (string) $queue['id'],
+        'PTS_CHUNK_ID'     => (string) ($chunk['id'] ?? ''),
+        'PTS_CHUNK_INDEX'  => (string) $completed,
+        'PTS_CHUNKS_TOTAL' => (string) $queue['total'],
+        'PTS_CHUNK_LABEL'  => (string) ($chunk['label'] ?? ''),
+    ];
+
+    if (is_array($chunk['env'] ?? null)) {
+        foreach ($chunk['env'] as $k => $v) {
+            $envMap[$k] = (string) $v;
+        }
+    }
+
+    $envParts = [];
+    foreach ($envMap as $key => $value) {
+        $envParts[] = $key . '=' . escapeshellarg($value);
+    }
+    $env = implode(' ', $envParts);
+
+    $queue['current_index']         = $completed;
+    $queue['current_chunk_id']      = (string) ($chunk['id'] ?? '');
+    $queue['status']                = 'running';
+    $queue['last_chunk_started_at'] = time();
+    $queue['lock_token']            = (string) ($lock['token'] ?? '');
+    $queue['current_pid']           = 0;
+    ptsb_backup_queue_save($queue);
+    ptsb_backup_queue_update_manual_status($queue, $chunk, 'running');
+
+    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
+         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
+
+    $result = shell_exec($cmd);
+    $pid    = 0;
+    if (is_string($result)) {
+        $trim = trim($result);
+        if ($trim !== '' && ctype_digit($trim)) {
+            $pid = (int) $trim;
+        } elseif (preg_match('/(\d+)/', $trim, $m)) {
+            $pid = (int) $m[1];
+        }
+    }
+
+    if ($pid > 0 && $queue['lock_token'] !== '') {
+        ptsb_lock_touch($queue['lock_token'], ['pid' => $pid]);
+        $queue['current_pid'] = $pid;
+        ptsb_backup_queue_save($queue);
+        ptsb_log('[queue] Etapa ' . ($completed + 1) . '/' . $queue['total'] . ' iniciada: ' . (string) ($chunk['label'] ?? $partsCsv));
+
+        $intent = get_option('ptsb_last_run_intent', []);
+        if (!is_array($intent)) {
+            $intent = [];
+        }
+        $intent['queue_id']      = (string) $queue['id'];
+        $intent['chunk_id']      = (string) ($chunk['id'] ?? '');
+        $intent['chunk_index']   = (int) $completed;
+        $intent['chunks_total']  = (int) $queue['total'];
+        $intent['chunk_label']   = (string) ($chunk['label'] ?? '');
+        $intent['chunk_subset']  = (string) ($chunk['subset'] ?? '');
+        $intent['chunk_parts']   = (string) $partsCsv;
+        update_option('ptsb_last_run_intent', $intent, true);
+
+        return true;
+    }
+
+    ptsb_lock_release($queue['lock_token'] !== '' ? $queue['lock_token'] : null);
+    $queue['lock_token']  = '';
+    $queue['status']      = 'failed';
+    $queue['current_pid'] = 0;
+    ptsb_backup_queue_save($queue);
+    ptsb_backup_queue_update_manual_status($queue, null, 'failed');
+    ptsb_log('[queue] Falha ao iniciar processo da etapa.');
+    return false;
+}
+
+function ptsb_backup_queue_finish(array $queue, array $payload = []): void {
+    $queue['status']            = 'completed';
+    $queue['lock_token']        = '';
+    $queue['current_pid']       = 0;
+    $queue['last_completed_at'] = time();
+    ptsb_backup_queue_save($queue);
+    ptsb_log('[queue] Todas as etapas concluídas.');
+}
+
+function ptsb_backup_queue_handle_chunk_done(array $payload): void {
+    $queueId = isset($payload['queue_id']) ? (string) $payload['queue_id'] : '';
+    if ($queueId === '') {
+        return;
+    }
+
+    $queue = ptsb_backup_queue_get();
+    if (empty($queue['id']) || $queue['id'] !== $queueId) {
+        return;
+    }
+
+    $queue['completed'] = min($queue['completed'] + 1, $queue['total']);
+    $queue['status']     = ($queue['completed'] >= $queue['total']) ? 'completed' : 'pending';
+    $queue['lock_token'] = '';
+    $queue['current_pid']= 0;
+    $queue['last_completed_at'] = time();
+    ptsb_backup_queue_save($queue);
+    ptsb_lock_release();
+
+    $label = '';
+    if (!empty($payload['chunk_label'])) {
+        $label = (string)$payload['chunk_label'];
+    } elseif (!empty($payload['chunk_parts'])) {
+        $label = (string)$payload['chunk_parts'];
+    }
+    if ($label !== '') {
+        ptsb_log('[queue] Etapa concluída: ' . $label);
+    }
+
+    if ($queue['status'] === 'completed') {
+        ptsb_backup_queue_finish($queue, $payload);
+        return;
+    }
+
+    ptsb_backup_queue_update_manual_status($queue, null, 'waiting');
+    ptsb_backup_queue_schedule_retry(5);
+}
+
+function ptsb_backup_queue_tick(): void {
+    $queue = ptsb_backup_queue_get();
+    if (empty($queue['id']) || empty($queue['chunks'])) {
+        return;
+    }
+
+    if ($queue['status'] === 'running') {
+        if (ptsb_lock_is_active()) {
+            return;
+        }
+        // se a etapa terminou mas o evento ainda não processou, agenda retry
+        if ((time() - (int)$queue['last_chunk_started_at']) > 120) {
+            ptsb_backup_queue_schedule_retry(5);
+        }
+        return;
+    }
+
+    if ($queue['status'] === 'pending') {
+        ptsb_backup_queue_schedule_retry(5);
+    }
+}
+
+add_action('ptsb_backup_done', 'ptsb_backup_queue_handle_chunk_done', 0);
+add_action('ptsb_run_queue_chunk', 'ptsb_backup_queue_run_chunk');
 
 function ptsb_uuid4(){
     $d = random_bytes(16);
@@ -615,6 +1148,7 @@ add_action('ptsb_run_manual_backup', function($job_id){
 
 add_action('ptsb_cron_tick', function(){
     $cfg  = ptsb_cfg();
+    ptsb_backup_queue_tick();
     $now  = ptsb_now_brt();
     $today= $now->format('Y-m-d');
     $miss = (int)$cfg['miss_window'];
@@ -869,9 +1403,6 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
-    $lock = ptsb_lock_try_acquire();
-    if (!$lock) { return; }
-    $token = (string)($lock['token'] ?? '');
 
     ptsb_log_rotate_if_needed();
 
@@ -903,6 +1434,23 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     } else {
         $keepDays = (int)$set['keep_days'];
     }
+
+    $intent = get_option('ptsb_last_run_intent', []);
+    $context = [
+        'job_id'         => is_array($intent) ? (string)($intent['job_id'] ?? '') : '',
+        'origin'         => is_array($intent) ? (string)($intent['origin'] ?? '') : '',
+        'keep_forever'   => ($keepDays === 0 ? 1 : 0),
+        'override_prefix'=> $overridePrefix,
+        'override_days'  => $overrideDays,
+    ];
+
+    if (ptsb_backup_queue_begin((string)$partsCsv, (string)$prefix, (int)$keepDays, $context)) {
+        return;
+    }
+
+    $lock = ptsb_lock_try_acquire();
+    if (!$lock) { return; }
+    $token = (string)($lock['token'] ?? '');
 
     $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
          . 'REMOTE='           . escapeshellarg($cfg['remote'])     . ' '
@@ -945,6 +1493,19 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
     if (!ptsb_can_shell()) return;
+
+    $keepDays = (int)$set['keep_days'];
+    $intent = get_option('ptsb_last_run_intent', []);
+    $context = [
+        'job_id'       => is_array($intent) ? (string)($intent['job_id'] ?? '') : '',
+        'origin'       => is_array($intent) ? (string)($intent['origin'] ?? '') : '',
+        'keep_forever' => ($keepDays === 0 ? 1 : 0),
+    ];
+
+    if (ptsb_backup_queue_begin($partsCsv, (string)$cfg['prefix'], $keepDays, $context)) {
+        return;
+    }
+
     $lock = ptsb_lock_try_acquire();
     if (!$lock) return;
     $token = (string)($lock['token'] ?? '');
