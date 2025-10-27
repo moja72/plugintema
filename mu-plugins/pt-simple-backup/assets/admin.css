@@ -1,0 +1,153 @@
+        
+/* Label + input em linha */
+.ptsb-inline-field{
+  display:inline-flex; align-items:center; gap:8px; margin:6px 0 !important;
+}
+
+/* “Respiro” acima da grade + grade de horários (4 por linha) */
+.ptsb-times-grid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(120px,1fr));
+  gap:6px;
+  margin-top:6px !important;
+}
+.ptsb-times-grid input[type="time"]{ width:100%; }
+
+/* Espaçamento de seção */
+.ptsb-section-gap{ display:inline-block; margin-top:12px; }
+
+/* ===== Paginação ===== */
+.ptsb-pager{
+  display:flex; align-items:center; gap:8px;
+  margin:14px 0 8px;
+  justify-content:flex-end;
+  margin-left:0;
+}
+.ptsb-pager .btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:36px; height:36px;
+  border:1px solid #555; border-radius:10px;
+  background:#1e1e1e; text-decoration:none;
+  transition:all .15s ease;
+}
+.ptsb-pager .btn .dashicons{ font-size:18px; line-height:1; }
+.ptsb-pager .btn:hover{ border-color:#2271b1; box-shadow:0 0 0 2px rgba(34,113,177,.15) inset; }
+.ptsb-pager .btn.is-disabled{ opacity:.45; pointer-events:none; filter:grayscale(1); }
+.ptsb-pager .status{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:0 6px; font-size:13px; opacity:.9;
+}
+.ptsb-pager .status .current{
+  width:72px; text-align:center; height:32px; border-radius:8px;
+}
+.ptsb-pager .status .sep{ opacity:.6 }
+
+/* Controle “Exibindo N de M” */
+.ptsb-list-controls{
+ background:#111; border:1px solid #333; border-radius:10px;
+  padding:8px 12px;
+  display:inline-flex; align-items:center; gap:10px;
+  min-height:36px;      /* <- mesma altura para os 2 blocos */;
+}
+
+.ptsb-toolbar{
+  display:inline-flex; align-items:center; gap:12px; flex-wrap:wrap;
+  margin:8px 0 10px;
+}
+#ptsb-per-form input[name="per"]{
+  height:32px; border-radius:8px; text-align:center;
+}
+
+/* Botão renomear (ícone apenas) */
+.ptsb-rename-btn{ background:none !important; border:none !important; }
+
+/* Chips de seleção */
+.ptsb-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:24px !important; }
+.ptsb-chip{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 10px; border:1px solid #666; border-radius:999px;
+  cursor:pointer; user-select:none;
+}
+.ptsb-chip .dashicons{ font-size:16px; line-height:1; vertical-align:-2px; }
+/* Pinta quando ativo (via classe) */
+.ptsb-chip.active{ background:#2271b1; color:#fff; border-color:#2271b1; }
+/* Compat: pinta quando o <input> interno está marcado */
+.ptsb-chip:has(input:checked){ background:#2271b1; color:#fff; border-color:#2271b1; }
+
+/* Coluna “Backup”: impedir quebra */
+td.ptsb-backup-cell{ white-space:nowrap; }
+
+/* Mini chips (ícones) */
+.ptsb-mini{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:18px; height:18px; margin:0 2px; padding:0;
+  border:0; border-radius:0;
+}
+.ptsb-mini .dashicons{ font-size:16px; line-height:1; }
+
+/* Retenção (badge) */
+.ptsb-ret{
+  display:inline-block; min-width:44px; text-align:center;
+  border:1px solid #666; border-radius:999px; padding:2px 8px;
+}
+.ptsb-ret.sempre{ background:#2271b1; color:#fff; border-color:#2271b1; }
+
+/* Linha marcada como vencida (expirada pela retenção — não mantida) */
+tr.ptsb-expired { opacity:.6; }
+tr.ptsb-expired td { color:#bfbfbf; }
+
+/* Selo “vencido” (badge pequeno) */
+.ptsb-tag{
+  display:inline-block; padding:2px 6px; border-radius:999px;
+  border:1px solid #555; font-size:11px; line-height:1; margin-left:6px;
+}
+.ptsb-tag.vencido{
+  background:#3b3b3b; border-color:#666;
+  text-transform:uppercase; letter-spacing:.2px;
+}
+
+/* Toggle switch */
+.ptsb-switch{ position:relative; display:inline-block; width:46px; height:26px; vertical-align:middle; }
+.ptsb-switch input{ display:none; }
+.ptsb-slider{
+  position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
+  background:#888; transition:.2s; border-radius:999px;
+}
+.ptsb-slider:before{
+  position:absolute; content:""; height:20px; width:20px;
+  left:3px; bottom:3px; background:#fff; transition:.2s; border-radius:50%;
+}
+.ptsb-switch input:checked + .ptsb-slider{ background:#2271b1; }
+.ptsb-switch input:checked + .ptsb-slider:before{ transform:translateX(20px); }
+
+/* Retenção: badge + toggle + texto em uma linha */
+.ptsb-keep-wrap{
+  display:inline-flex; align-items:center; gap:10px; white-space:nowrap;
+}
+.ptsb-keep-form{ display:inline; margin:0; }
+.ptsb-keep-toggle{
+  display:inline-flex; align-items:center; gap:8px; vertical-align:middle;
+}
+.ptsb-keep-toggle .ptsb-keep-txt{ display:inline-block; color:#aaa !important; opacity:.8 !important; }
+
+/* Espaço abaixo das tabs */
+.wrap .nav-tab-wrapper{ margin-bottom:36px !important; }
+
+/* ===== Ações: botões na MESMA linha ===== */
+td.ptsb-actions{ white-space:nowrap; }
+td.ptsb-actions details{
+  display:inline-block; vertical-align:middle; margin-right:6px;
+}
+/* remove o marcador padrão do <summary> */
+td.ptsb-actions details > summary::-webkit-details-marker{ display:none; }
+td.ptsb-actions details > summary{ list-style:none; }
+/* forms como botões inline */
+td.ptsb-actions form{
+  display:inline-block !important; vertical-align:middle; margin-left:6px;
+}
+/* alinhamento vertical dos botões do WP */
+td.ptsb-actions .button{ vertical-align:middle; }
+
+
+
+      
