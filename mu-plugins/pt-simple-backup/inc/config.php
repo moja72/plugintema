@@ -179,22 +179,8 @@ function ptsb_env_pairs_from_file(?string $path = null, bool $refresh = false): 
 function ptsb_shell_env_prefix(bool $refresh = false): string {
     static $cache = null;
     static $lastHash = null;
-    static $applied = [];
-    static $canPutenv = null;
-
-    if ($canPutenv === null) {
-        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
-        $canPutenv = function_exists('putenv') && !in_array('putenv', $disabled, true);
-    }
 
     if ($refresh) {
-        if ($canPutenv && $applied) {
-            foreach (array_keys($applied) as $key) {
-                putenv($key);
-            }
-        }
-
-        $applied = [];
         $cache = null;
         $lastHash = null;
     }
@@ -202,48 +188,22 @@ function ptsb_shell_env_prefix(bool $refresh = false): string {
     $pairs = ptsb_env_pairs_from_file(null, $refresh);
     $hash  = md5(serialize($pairs));
 
-    if ($hash !== $lastHash) {
-        if ($canPutenv) {
-            foreach ($applied as $key => $value) {
-                if (!array_key_exists($key, $pairs)) {
-                    putenv($key);
-                    unset($applied[$key]);
-                }
-            }
-
-            foreach ($pairs as $key => $value) {
-                if (!array_key_exists($key, $applied) || $applied[$key] !== $value) {
-                    putenv($key . '=' . $value);
-                    $applied[$key] = $value;
-                }
-            }
-        }
-
-        $chunks = [];
-        foreach ($pairs as $key => $value) {
-            $chunks[] = $key . '=' . escapeshellarg($value);
-        }
-
-        $base = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
-        $prefix = '/usr/bin/env ' . ($chunks ? implode(' ', $chunks) . ' ' : '') . $base;
-
-        $cache = $prefix;
-        $lastHash = $hash;
-
-        return $prefix;
+    if ($cache !== null && $lastHash === $hash) {
+        return $cache;
     }
 
-    if ($cache === null) {
-        $chunks = [];
-        foreach ($pairs as $key => $value) {
-            $chunks[] = $key . '=' . escapeshellarg($value);
-        }
-
-        $base = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
-        $cache = '/usr/bin/env ' . ($chunks ? implode(' ', $chunks) . ' ' : '') . $base;
+    $chunks = [];
+    foreach ($pairs as $key => $value) {
+        $chunks[] = $key . '=' . escapeshellarg($value);
     }
 
-    return $cache;
+    $base = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
+    $prefix = '/usr/bin/env ' . ($chunks ? implode(' ', $chunks) . ' ' : '') . $base;
+
+    $cache = $prefix;
+    $lastHash = $hash;
+
+    return $prefix;
 }
 
 function ptsb_rclone_command(string $command): string {
