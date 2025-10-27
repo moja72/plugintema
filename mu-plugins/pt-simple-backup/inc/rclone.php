@@ -259,9 +259,9 @@ function ptsb_manifest_remote_meta(string $tarFile): array {
 
     $cmd = 'lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
-         . ' --include ' . escapeshellarg($jsonPath) . ' --fast-list';
+         . ' --include ' . escapeshellarg($jsonPath);
 
-    $out = ptsb_rclone_exec($cmd);
+    $out = ptsb_rclone_exec($cmd, ['category' => 'list', 'fast_list' => true]);
     $meta = [];
 
     foreach (array_filter(array_map('trim', explode("\n", (string) $out))) as $line) {
@@ -318,7 +318,7 @@ function ptsb_manifest_read(string $tarFile): array {
     }
 
     $jsonPath = ptsb_tar_to_json($tarFile);
-    $out      = ptsb_rclone_exec('cat ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' 2>/dev/null');
+    $out      = ptsb_rclone_exec('cat ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' 2>/dev/null', ['category' => 'transfer']);
 
     $data = json_decode((string) $out, true);
     if (!is_array($data)) {
@@ -349,7 +349,7 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge = true): b
     $data    = array_merge($cur, $add);
     $payload = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-    ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' 2>/dev/null', (string)$payload);
+    ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' 2>/dev/null', (string)$payload, ['category' => 'transfer']);
 
     delete_transient('ptsb_m_' . md5($tarFile));
     delete_transient('ptsb_manifest_meta_' . md5($jsonPath));
@@ -370,20 +370,20 @@ function ptsb_drive_info() {
     $remote   = $cfg['remote'];
     $rem_name = rtrim($remote, ':');
 
-    $aboutJson = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' --json 2>/dev/null');
+    $aboutJson = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' --json 2>/dev/null', ['category' => 'info']);
     $j = json_decode((string)$aboutJson, true);
     if (is_array($j)) {
         if (isset($j['used']))  $info['used']  = (int)$j['used'];
         if (isset($j['total'])) $info['total'] = (int)$j['total'];
     } else {
-        $txt = (string)ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null');
+        $txt = (string)ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null', ['category' => 'info']);
         if (preg_match('/Used:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m))  $info['used']  = ptsb_size_to_bytes($m[1], $m[2]);
         if (preg_match('/Total:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m)) $info['total'] = ptsb_size_to_bytes($m[1], $m[2]);
     }
 
-    $u = (string)ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null');
+    $u = (string)ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null', ['category' => 'info']);
     if (trim($u) === '') {
-        $u = (string)ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null');
+        $u = (string)ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null', ['category' => 'info']);
     }
     if ($u !== '') {
         $ju = json_decode($u, true);
@@ -411,9 +411,9 @@ function ptsb_plan_mark_keep_next($prefix){
 function ptsb_apply_keep_sidecar($file){
     $cfg = ptsb_cfg();
     if (!ptsb_can_shell() || $file==='') return false;
-    $touch = ptsb_rclone_exec('touch ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --no-create-dirs');
+    $touch = ptsb_rclone_exec('touch ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --no-create-dirs', ['category' => 'mutate']);
     if ($touch === null || trim((string)$touch) === '') {
-        ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $file . '.keep'), '');
+        ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $file . '.keep'), '', ['category' => 'transfer']);
     }
     ptsb_remote_cache_flush();
     return true;
@@ -437,8 +437,8 @@ function ptsb_list_remote_files(bool $force_refresh = false): array {
 
     $cmd = 'lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
-         . ' --include ' . escapeshellarg('*.tar.gz') . ' --fast-list';
-    $out = ptsb_rclone_exec($cmd);
+         . ' --include ' . escapeshellarg('*.tar.gz');
+    $out = ptsb_rclone_exec($cmd, ['category' => 'list', 'fast_list' => true]);
     $rows = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $ln) {
         $parts = explode(';', $ln, 3);
@@ -463,8 +463,8 @@ function ptsb_keep_map(bool $force_refresh = false): array {
 
     $cmd = 'lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "p" --separator ";" '
-         . ' --include ' . escapeshellarg('*.tar.gz.keep') . ' --fast-list';
-    $out = ptsb_rclone_exec($cmd);
+         . ' --include ' . escapeshellarg('*.tar.gz.keep');
+    $out = ptsb_rclone_exec($cmd, ['category' => 'list', 'fast_list' => true]);
     $map = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $p) {
         $base = preg_replace('/\.keep$/', '', $p);

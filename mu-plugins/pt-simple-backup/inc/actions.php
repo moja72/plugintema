@@ -250,7 +250,8 @@ $effPrefix = ($prefix !== null && $prefix !== '') ? $prefix : ptsb_cfg()['prefix
         // já existe arquivo com o novo nome?
         $exists = ptsb_rclone_exec(
             'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
-            . ' --include ' . escapeshellarg($new) . ' --fast-list'
+            . ' --include ' . escapeshellarg($new),
+            ['category' => 'list', 'fast_list' => true]
         );
         if (trim((string)$exists) !== '') {
             add_settings_error('ptsb','rn_exists','Já existe um arquivo com esse nome no Drive.', 'error'); ptsb_back();
@@ -258,13 +259,15 @@ $effPrefix = ($prefix !== null && $prefix !== '') ? $prefix : ptsb_cfg()['prefix
 
         // renomeia o arquivo principal
         $out = ptsb_rclone_exec(
-            'moveto ' . escapeshellarg($cfg['remote'] . $old) . ' ' . escapeshellarg($cfg['remote'] . $new) . ' --fast-list 2>&1'
+            'moveto ' . escapeshellarg($cfg['remote'] . $old) . ' ' . escapeshellarg($cfg['remote'] . $new) . ' 2>&1',
+            ['category' => 'mutate']
         );
 
         // checa sucesso
         $chkOld = ptsb_rclone_exec(
             'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
-            . ' --include ' . escapeshellarg($old) . ' --fast-list'
+            . ' --include ' . escapeshellarg($old),
+            ['category' => 'list', 'fast_list' => true]
         );
 
 // renomeia .json (se existir): .tar.gz -> .json
@@ -273,12 +276,14 @@ $newJson = ptsb_tar_to_json($new);
 
 $hasJson = ptsb_rclone_exec(
     'lsf ' . escapeshellarg($cfg['remote'])
-  . ' --files-only --format "p" --include ' . escapeshellarg($oldJson) . ' --fast-list'
+  . ' --files-only --format "p" --include ' . escapeshellarg($oldJson),
+    ['category' => 'list', 'fast_list' => true]
 );
 
 if (trim((string)$hasJson) !== '') {
     ptsb_rclone_exec(
-        'moveto ' . escapeshellarg($cfg['remote'] . $oldJson) . ' ' . escapeshellarg($cfg['remote'] . $newJson) . ' --fast-list'
+        'moveto ' . escapeshellarg($cfg['remote'] . $oldJson) . ' ' . escapeshellarg($cfg['remote'] . $newJson),
+        ['category' => 'mutate']
     );
 }
 
@@ -286,7 +291,8 @@ if (trim((string)$hasJson) !== '') {
 
         $chkNew = ptsb_rclone_exec(
             'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
-            . ' --include ' . escapeshellarg($new) . ' --fast-list'
+            . ' --include ' . escapeshellarg($new),
+            ['category' => 'list', 'fast_list' => true]
         );
 
         if (trim((string)$chkOld) === '' && trim((string)$chkNew) !== '') {
@@ -295,12 +301,14 @@ if (trim((string)$hasJson) !== '') {
             $newKeep = $new.'.keep';
             $hasKeep = ptsb_rclone_exec(
                 'lsf ' . escapeshellarg($cfg['remote']) . ' --files-only --format "p" '
-                . ' --include ' . escapeshellarg($oldKeep) . ' --fast-list'
+                . ' --include ' . escapeshellarg($oldKeep),
+                ['category' => 'list', 'fast_list' => true]
             );
             if (trim((string)$hasKeep) !== '') {
                 ptsb_rclone_exec(
                     'moveto ' . escapeshellarg($cfg['remote'] . $oldKeep) . ' '
-                    . escapeshellarg($cfg['remote'] . $newKeep) . ' --fast-list'
+                    . escapeshellarg($cfg['remote'] . $newKeep),
+                    ['category' => 'mutate']
                 );
             }
 
@@ -321,15 +329,17 @@ if (trim((string)$hasJson) !== '') {
 
         if ($keep) {
             $touch = ptsb_rclone_exec(
-                'touch ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --no-create-dirs'
+                'touch ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --no-create-dirs',
+                ['category' => 'mutate']
             );
             if ($touch === null || trim((string)$touch) === '') {
-                ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $file . '.keep'), '');
+                ptsb_rclone_exec_input('rcat ' . escapeshellarg($cfg['remote'] . $file . '.keep'), '', ['category' => 'transfer']);
             }
             add_settings_error('ptsb', 'keep_on', 'Marcado como "Sempre manter".', 'updated');
         } else {
             ptsb_rclone_exec(
-                'deletefile ' . escapeshellarg($cfg['remote'] . $file . '.keep') . ' --fast-list'
+                'deletefile ' . escapeshellarg($cfg['remote'] . $file . '.keep'),
+                ['category' => 'mutate']
             );
             add_settings_error('ptsb', 'keep_off', 'Marca "Sempre manter" removida.', 'updated');
         }
@@ -354,7 +364,8 @@ if (trim((string)$hasJson) !== '') {
      } else {
     $chk = ptsb_rclone_exec(
         'lsf ' . escapeshellarg($cfg['remote'])
-      . ' --files-only --format "p" --include ' . escapeshellarg($file . '.keep') . ' --fast-list'
+      . ' --files-only --format "p" --include ' . escapeshellarg($file . '.keep'),
+        ['category' => 'list', 'fast_list' => true]
     );
     if (trim((string)$chk) !== '') {
         add_settings_error('ptsb', 'del_block', 'Este arquivo está marcado como "Sempre manter". Remova a marca antes de apagar.', 'error');
@@ -363,13 +374,15 @@ if (trim((string)$hasJson) !== '') {
 
 // apaga o .tar.gz
 ptsb_rclone_exec(
-     'deletefile ' . escapeshellarg($cfg['remote'] . $file) . ' --fast-list'
+     'deletefile ' . escapeshellarg($cfg['remote'] . $file),
+     ['category' => 'mutate']
 );
 
 // apaga o sidecar JSON correto: foo.tar.gz -> foo.json
 $jsonPath = ptsb_tar_to_json($file);
 ptsb_rclone_exec(
-          'deletefile ' . escapeshellarg($cfg['remote'] . $jsonPath) . ' --fast-list'
+          'deletefile ' . escapeshellarg($cfg['remote'] . $jsonPath),
+          ['category' => 'mutate']
 );
 
 delete_transient('ptsb_m_' . md5($file));

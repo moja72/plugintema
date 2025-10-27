@@ -73,13 +73,15 @@ function ptsb_rclone_command(string $command): string {
     return ptsb_shell_env_prefix() . ' rclone ' . $command;
 }
 
-function ptsb_rclone_exec(string $command)
+function ptsb_rclone_exec(string $command, array $context = [])
 {
+    $command = ptsb_rclone_apply_flags($command, $context);
     return shell_exec(ptsb_rclone_command($command));
 }
 
-function ptsb_rclone_exec_input(string $command, string $input)
+function ptsb_rclone_exec_input(string $command, string $input, array $context = [])
 {
+    $command = ptsb_rclone_apply_flags($command, $context);
     $cmd = ptsb_rclone_command($command);
     $descriptor = [
         0 => ['pipe', 'r'],
@@ -107,6 +109,184 @@ function ptsb_rclone_exec_input(string $command, string $input)
     proc_close($proc);
 
     return $stdout;
+}
+
+function ptsb_rclone_backend_features(): array {
+    static $cache = null;
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $cache = [];
+
+    if (!ptsb_can_shell()) {
+        return $cache;
+    }
+
+    $cfg = ptsb_cfg();
+    $remote = isset($cfg['remote']) ? (string) $cfg['remote'] : '';
+    if ($remote === '') {
+        return $cache;
+    }
+
+    $json = shell_exec(ptsb_shell_env_prefix() . ' rclone backend features ' . escapeshellarg($remote) . ' --json 2>/dev/null');
+    $data = json_decode((string) $json, true);
+    if (is_array($data)) {
+        $cache = $data;
+    }
+
+    return $cache;
+}
+
+function ptsb_rclone_supports_fast_list(): bool {
+    static $supports = null;
+
+    if ($supports !== null) {
+        return $supports;
+    }
+
+    $features = ptsb_rclone_backend_features();
+    $fast = false;
+
+    if (isset($features['Features']) && is_array($features['Features'])) {
+        $fast = !empty($features['Features']['ListR']);
+    } elseif (isset($features['features']) && is_array($features['features'])) {
+        $fast = !empty($features['features']['ListR']);
+    } elseif (isset($features['ListR'])) {
+        $fast = !empty($features['ListR']);
+    }
+
+    $supports = (bool) apply_filters('ptsb_rclone_supports_fast_list', $fast, $features);
+
+    return $supports;
+}
+
+function ptsb_rclone_delta_flags(array $context = []): array {
+    $keepDays = null;
+    if (function_exists('ptsb_settings')) {
+        $settings = ptsb_settings();
+        if (is_array($settings) && isset($settings['keep_days'])) {
+            $keepDays = (int) $settings['keep_days'];
+        }
+    }
+    if ($keepDays === null || $keepDays <= 0) {
+        $cfg = ptsb_cfg();
+        if (isset($cfg['keep_days_def'])) {
+            $keepDays = (int) $cfg['keep_days_def'];
+        }
+    }
+    $maxAge = null;
+    if ($keepDays !== null && $keepDays > 0) {
+        $maxAge = max(1, min($keepDays, 3650)) . 'd';
+    }
+
+    $defaults = [
+        'update'      => true,
+        'max_age'     => $maxAge,
+        'min_age'     => null,
+        'include'     => [],
+        'exclude'     => [],
+        'filter_from' => [],
+    ];
+
+    $config = apply_filters('ptsb_rclone_delta_config', $defaults, $context);
+    if (!is_array($config)) {
+        $config = $defaults;
+    } else {
+        $config = array_merge($defaults, $config);
+    }
+
+    $flags = [];
+
+    if (!empty($config['update'])) {
+        $flags[] = '--update';
+    }
+
+    foreach (['max_age' => '--max-age', 'min_age' => '--min-age'] as $key => $flag) {
+        $value = isset($config[$key]) ? trim((string) $config[$key]) : '';
+        if ($value !== '') {
+            $flags[] = $flag . '=' . $value;
+        }
+    }
+
+    foreach ([
+        'include'     => '--include',
+        'exclude'     => '--exclude',
+        'filter_from' => '--filter-from',
+    ] as $key => $flag) {
+        $values = isset($config[$key]) ? (array) $config[$key] : [];
+        foreach ($values as $pattern) {
+            $pattern = trim((string) $pattern);
+            if ($pattern === '') {
+                continue;
+            }
+            $flags[] = $flag . ' ' . escapeshellarg($pattern);
+        }
+    }
+
+    return $flags;
+}
+
+function ptsb_rclone_default_flags(array $context = []): array {
+    $category = strtolower((string) ($context['category'] ?? 'general'));
+
+    $flags = [
+        '--retries=5',
+        '--retries-sleep=10s',
+        '--low-level-retries=10',
+        '--low-level-retries-sleep=5s',
+    ];
+
+    if (in_array($category, ['transfer', 'mutate'], true)) {
+        $flags[] = '--transfers=2';
+        $flags[] = '--checkers=4';
+    } elseif ($category === 'list') {
+        $flags[] = '--checkers=4';
+    }
+
+    if (!empty($context['delta'])) {
+        $flags = array_merge($flags, ptsb_rclone_delta_flags($context));
+    }
+
+    if (!empty($context['fast_list']) && ptsb_rclone_supports_fast_list()) {
+        $flags[] = '--fast-list';
+    }
+
+    return apply_filters('ptsb_rclone_default_flags', $flags, $context);
+}
+
+function ptsb_rclone_flags(array $context = []): array {
+    $raw = ptsb_rclone_default_flags($context);
+    $flags = [];
+
+    foreach ((array) $raw as $flag) {
+        $flag = trim((string) $flag);
+        if ($flag !== '') {
+            $flags[] = $flag;
+        }
+    }
+
+    return array_values(array_unique($flags));
+}
+
+function ptsb_rclone_flags_string(array $context = []): string {
+    return implode(' ', ptsb_rclone_flags($context));
+}
+
+function ptsb_rclone_apply_flags(string $command, array $context = []): string {
+    $flags = ptsb_rclone_flags($context);
+    if (!$flags) {
+        return $command;
+    }
+
+    $redirect = '';
+    if (preg_match('/\s+(2>\/dev\/null|1>\/dev\/null|2>&1)\s*$/', $command, $m)) {
+        $command = substr($command, 0, -strlen($m[0]));
+        $redirect = ' ' . $m[1];
+    }
+
+    return rtrim($command) . ' ' . implode(' ', $flags) . $redirect;
 }
 
 function ptsb_remote_cache_flush(): void {

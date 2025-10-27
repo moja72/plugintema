@@ -915,6 +915,21 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
          . 'KEEP_FOREVER='     . escapeshellarg($keepDays === 0 ? 1 : 0) . ' ' // opcional p/ scripts que queiram esse flag
          . 'PARTS='            . escapeshellarg($partsCsv);
 
+    $transferOpts = ptsb_rclone_flags_string(['category' => 'transfer', 'delta' => true]);
+    if ($transferOpts !== '') {
+        $env .= ' RCLONE_BASE_OPTS=' . escapeshellarg($transferOpts);
+    }
+
+    $listOpts = ptsb_rclone_flags_string(['category' => 'list', 'fast_list' => true]);
+    if ($listOpts !== '') {
+        $env .= ' RCLONE_LIST_OPTS=' . escapeshellarg($listOpts);
+    }
+
+    $mutateOpts = ptsb_rclone_flags_string(['category' => 'mutate']);
+    if ($mutateOpts !== '') {
+        $env .= ' RCLONE_MUTATE_OPTS=' . escapeshellarg($mutateOpts);
+    }
+
     // guarda as partes usadas neste disparo (fallback para a notificação)
     update_option('ptsb_last_run_parts', (string)$partsCsv, true);
 
@@ -956,6 +971,21 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
          . 'KEEP_DAYS='  . escapeshellarg($set['keep_days'])  . ' '
          . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
          . 'PARTS='      . escapeshellarg($partsCsv);
+
+    $transferOpts = ptsb_rclone_flags_string(['category' => 'transfer', 'delta' => true]);
+    if ($transferOpts !== '') {
+        $env .= ' RCLONE_BASE_OPTS=' . escapeshellarg($transferOpts);
+    }
+
+    $listOpts = ptsb_rclone_flags_string(['category' => 'list', 'fast_list' => true]);
+    if ($listOpts !== '') {
+        $env .= ' RCLONE_LIST_OPTS=' . escapeshellarg($listOpts);
+    }
+
+    $mutateOpts = ptsb_rclone_flags_string(['category' => 'mutate']);
+    if ($mutateOpts !== '') {
+        $env .= ' RCLONE_MUTATE_OPTS=' . escapeshellarg($mutateOpts);
+    }
 
     $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
          . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
