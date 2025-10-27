@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PT Simple Backup Loader
  * Description: Bootstrap do MU plugin de backup simples da Plugintema.
- * Version: 0.1.1
+ * Version: 0.1.2
  */
 
 if (!defined('ABSPATH')) { exit; }

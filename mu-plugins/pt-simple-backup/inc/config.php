@@ -431,6 +431,10 @@ function ptsb_remote_cache_flush(): void {
     delete_transient('ptsb_totals_v1');
     delete_transient('ptsb_remote_files_v1');
     delete_transient('ptsb_keep_map_v1');
+
+    delete_option('ptsb_remote_files_cache_v1');
+    delete_option('ptsb_drive_info_cache_v1');
+    delete_option('ptsb_backups_totals_cache_v1');
 }
 
 function ptsb_tail_cache_flush(string $path): void {
@@ -597,6 +601,32 @@ function ptsb_hsize($bytes) {
     return number_format_i18n(max($b/1048576, 0.01), 2) . ' MB';
 }
 
+function ptsb_backups_totals_cache_get(): ?array {
+    $cache = get_option('ptsb_backups_totals_cache_v1', []);
+    if (!is_array($cache)) {
+        return null;
+    }
+
+    if (!isset($cache['count'], $cache['bytes'])) {
+        return null;
+    }
+
+    return [
+        'count' => (int) $cache['count'],
+        'bytes' => (int) $cache['bytes'],
+    ];
+}
+
+function ptsb_backups_totals_cache_store(array $totals): void {
+    $payload = [
+        'count'      => (int) ($totals['count'] ?? 0),
+        'bytes'      => (int) ($totals['bytes'] ?? 0),
+        'updated_at' => time(),
+    ];
+
+    update_option('ptsb_backups_totals_cache_v1', $payload, false);
+}
+
 /** Totais de backups no Drive (count e bytes), com cache de 10 min. */
 
 function ptsb_backups_totals_cached(): array {
@@ -605,13 +635,25 @@ function ptsb_backups_totals_cached(): array {
     if (is_array($cached) && isset($cached['count'], $cached['bytes'])) {
         return $cached;
     }
+
+    $fallback = ptsb_backups_totals_cache_get();
+    if (!ptsb_can_shell()) {
+        return $fallback ?? ['count' => 0, 'bytes' => 0];
+    }
+
     $rows = ptsb_list_remote_files(); // 1 chamada rclone lsf
     $count = count($rows);
     $bytes = 0;
-    foreach ($rows as $r) { $bytes += (int)($r['size'] ?? 0); }
-    $out = ['count'=>$count, 'bytes'=>$bytes];
+    foreach ($rows as $r) {
+        $bytes += (int) ($r['size'] ?? 0);
+    }
+
+    $out = ['count' => $count, 'bytes' => $bytes];
+
     set_transient($key, $out, 10 * MINUTE_IN_SECONDS); // 10 min
-    return $out;
+    ptsb_backups_totals_cache_store($out);
+
+    return $out ?: ($fallback ?? ['count' => 0, 'bytes' => 0]);
 }
 
 /** Converte nome de bundle .tar.gz para o sidecar .json */
