@@ -3,6 +3,7 @@ if (!defined('ABSPATH')) { exit; }
 
 function ptsb_cfg(bool $refresh = false) {
     static $cache = null;
+    static $building = false;
 
     if ($refresh) {
         $cache = null;
@@ -12,7 +13,14 @@ function ptsb_cfg(bool $refresh = false) {
         return $cache;
     }
 
-    $cfg = [
+    if ($building) {
+        return is_array($cache) ? $cache : [];
+    }
+
+    $building = true;
+
+    try {
+        $cfg = [
         'remote'         => 'gdrive_backup:',
         'prefix'         => 'wpb-',
         'log'            => '/home/plugintema.com/Scripts/backup-wp.log',
@@ -20,6 +28,7 @@ function ptsb_cfg(bool $refresh = false) {
         'script_backup'  => '/home/plugintema.com/Scripts/wp-backup-to-gdrive.sh',
         'script_restore' => '/home/plugintema.com/Scripts/wp-restore-from-archive.sh',
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
+        'env_file'       => '/home/plugintema.com/Scripts/.env',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
         'keep_days_def'  => 12,
 
@@ -40,20 +49,27 @@ function ptsb_cfg(bool $refresh = false) {
      * - ptsb_config           : altera o array completo
      * - ptsb_remote           : altera remote rclone (ex.: 'meudrive:')
      * - ptsb_prefix           : prefixo dos arquivos (ex.: 'site-')
+     * - ptsb_env_file         : altera o caminho do arquivo .env sensível
      * - ptsb_default_parts    : CSV padrão para PARTS (ver ptsb_start_backup)
      * - ptsb_default_ui_codes : letras padrão marcadas na UI (P,T,W,S,M,O)
      */
-    $cfg = apply_filters('ptsb_config', $cfg);
-    $cfg['remote'] = apply_filters('ptsb_remote', $cfg['remote']);
-    $cfg['prefix'] = apply_filters('ptsb_prefix', $cfg['prefix']);
+        $cfg = apply_filters('ptsb_config', $cfg);
+        $cfg['remote'] = apply_filters('ptsb_remote', $cfg['remote']);
+        $cfg['prefix'] = apply_filters('ptsb_prefix', $cfg['prefix']);
+        $cfg['env_file'] = apply_filters('ptsb_env_file', $cfg['env_file']);
 
-    $cache = $cfg;
+        $cache = $cfg;
+    } finally {
+        $building = false;
+    }
 
     return $cache;
 }
 
 function ptsb_cfg_flush(): void {
     ptsb_cfg(true);
+    ptsb_env_pairs_from_file(null, true);
+    ptsb_shell_env_prefix(true);
 }
 
 function ptsb_get_nonce(): string {
@@ -64,8 +80,130 @@ function ptsb_get_nonce(): string {
     return $nonce;
 }
 
-function ptsb_shell_env_prefix(): string {
-    return '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
+function ptsb_env_pairs_from_file(?string $path = null, bool $refresh = false): array {
+    static $cache = null;
+
+    if ($refresh) {
+        $cache = null;
+    }
+
+    if ($path === null) {
+        $cfg = ptsb_cfg();
+        $path = (string) ($cfg['env_file'] ?? '');
+    } else {
+        $path = (string) $path;
+    }
+
+    if ($cache !== null && $cache['path'] === $path) {
+        $currentMTime = $path !== '' && is_readable($path) ? @filemtime($path) : null;
+        if ($currentMTime === false) {
+            $currentMTime = null;
+        }
+
+        if ($currentMTime === $cache['mtime']) {
+            return $cache['data'];
+        }
+    }
+
+    if ($path === '' || !is_readable($path)) {
+        $cache = ['path' => $path, 'mtime' => null, 'data' => []];
+        return [];
+    }
+
+    $contents = @file_get_contents($path);
+    if ($contents === false) {
+        $cache = ['path' => $path, 'mtime' => null, 'data' => []];
+        return [];
+    }
+
+    $lines = preg_split('/\r\n|\n|\r/', $contents) ?: [];
+    $buffer = [];
+
+    foreach ($lines as $line) {
+        $line = trim((string) $line);
+        if ($line === '' || $line[0] === '#' || $line[0] === ';') {
+            continue;
+        }
+
+        if (stripos($line, 'export ') === 0) {
+            $line = ltrim(substr($line, 7));
+        }
+
+        if ($line === '' || strpos($line, '=') === false) {
+            continue;
+        }
+
+        $buffer[] = $line;
+    }
+
+    if (!$buffer) {
+        $cache = ['path' => $path, 'mtime' => @filemtime($path) ?: null, 'data' => []];
+        return [];
+    }
+
+    $parsed = @parse_ini_string(implode("\n", $buffer), false, INI_SCANNER_RAW);
+    if (!is_array($parsed)) {
+        $cache = ['path' => $path, 'mtime' => @filemtime($path) ?: null, 'data' => []];
+        return [];
+    }
+
+    $pairs = [];
+    foreach ($parsed as $key => $value) {
+        $key = trim((string) $key);
+        if ($key === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $key)) {
+            continue;
+        }
+
+        if (is_array($value)) {
+            continue;
+        }
+
+        $value = (string) $value;
+        $len = strlen($value);
+        if ($len >= 2) {
+            $first = $value[0];
+            $last  = $value[$len - 1];
+            if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
+                $value = substr($value, 1, -1);
+            }
+        }
+
+        $pairs[$key] = $value;
+    }
+
+    $cache = ['path' => $path, 'mtime' => @filemtime($path) ?: null, 'data' => $pairs];
+
+    return $pairs;
+}
+
+function ptsb_shell_env_prefix(bool $refresh = false): string {
+    static $cache = null;
+    static $lastHash = null;
+
+    if ($refresh) {
+        $cache = null;
+        $lastHash = null;
+    }
+
+    $pairs = ptsb_env_pairs_from_file(null, $refresh);
+    $hash  = md5(serialize($pairs));
+
+    if ($cache !== null && $lastHash === $hash) {
+        return $cache;
+    }
+
+    $chunks = [];
+    foreach ($pairs as $key => $value) {
+        $chunks[] = $key . '=' . escapeshellarg($value);
+    }
+
+    $base = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
+    $prefix = '/usr/bin/env ' . ($chunks ? implode(' ', $chunks) . ' ' : '') . $base;
+
+    $cache = $prefix;
+    $lastHash = $hash;
+
+    return $prefix;
 }
 
 function ptsb_rclone_command(string $command): string {
