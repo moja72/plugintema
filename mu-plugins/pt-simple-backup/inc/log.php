@@ -2,10 +2,10 @@
 if (!defined('ABSPATH')) { exit; }
 
 function ptsb_log($msg) {
-  $cfg = ptsb_cfg();
-  ptsb_log_rotate_if_needed(); // NOVO
-  $line = '['.ptsb_now_brt()->format('d-m-Y-H:i').'] '.strip_tags($msg)."\n";
-  @file_put_contents($cfg['log'], $line, FILE_APPEND);
+    $cfg  = ptsb_cfg();
+    ptsb_log_rotate_if_needed();
+    $line = '[' . ptsb_now_brt()->format('d-m-Y-H:i') . '] ' . strip_tags($msg) . "\n";
+    @file_put_contents($cfg['log'], $line, FILE_APPEND);
 }
 
 /**
@@ -50,6 +50,8 @@ function ptsb_log_rotate_if_needed(): void {
     // 3) se sobrou .(keep+1), remove
     $overflow = $log . '.' . ($keep + 1);
     if (@file_exists($overflow)) @unlink($overflow);
+
+    ptsb_tail_cache_flush($log);
 }
 
 /**
@@ -79,17 +81,61 @@ function ptsb_log_clear_all(): void {
         @unlink($log);
         @file_put_contents($log, "");
     }
+
+    ptsb_tail_cache_flush($log);
 }
 
 function ptsb_tail_log_raw($path, $n = 50) {
-    if (!@file_exists($path)) return "Log nao encontrado em: $path";
-    if (ptsb_can_shell()) {
-        $txt = shell_exec('tail -n '.intval($n).' '.escapeshellarg($path));
-        if ($txt !== null && $txt !== false && $txt !== '') return ptsb_to_utf8((string)$txt);
+    $path = (string)$path;
+    $n    = max(1, (int)$n);
+
+    if ($path === '' || !@file_exists($path)) {
+        return "Log nao encontrado em: $path";
     }
+
+    $size = @filesize($path);
+    $mtime = @filemtime($path);
+    if ($size === false || $mtime === false) {
+        return "Sem acesso de leitura ao log: $path";
+    }
+
+    $cacheKey = 'ptsb_tail_v1_' . md5($path) . '_' . $n;
+    $cached   = get_transient($cacheKey);
+    if (is_array($cached) && isset($cached['size'], $cached['mtime'], $cached['text'])) {
+        if ((int)$cached['size'] === (int)$size && (int)$cached['mtime'] === (int)$mtime) {
+            return (string)$cached['text'];
+        }
+
+        if ((int)$cached['size'] < (int)$size && (int)$cached['mtime'] <= (int)$mtime) {
+            $delta = ptsb_tail_log_read_append($path, (int)$cached['size'], (int)$size);
+            if ($delta !== null) {
+                $combined = ptsb_tail_log_keep_lines((string)$cached['text'] . $delta, $n);
+                $combined = ptsb_to_utf8($combined);
+                set_transient($cacheKey, ['size' => $size, 'mtime' => $mtime, 'text' => $combined], 60);
+                return $combined;
+            }
+        }
+    }
+
+    $text = ptsb_tail_log_read_full($path, $n);
+    $text = ptsb_to_utf8($text);
+    set_transient($cacheKey, ['size' => $size, 'mtime' => $mtime, 'text' => $text], 60);
+    return $text;
+}
+
+function ptsb_tail_log_read_full(string $path, int $n): string {
+    if (ptsb_can_shell()) {
+        $txt = shell_exec('tail -n ' . $n . ' ' . escapeshellarg($path));
+        if (is_string($txt) && $txt !== '') {
+            return (string)$txt;
+        }
+    }
+
     $f = @fopen($path, 'rb');
     if (!$f) return "Sem acesso de leitura ao log: $path";
-    $lines = []; $buffer = '';
+
+    $lines = [];
+    $buffer = '';
     fseek($f, 0, SEEK_END);
     $filesize = ftell($f);
     $chunk = 4096;
@@ -102,8 +148,53 @@ function ptsb_tail_log_raw($path, $n = 50) {
         $lines = explode("\n", $buffer);
     }
     fclose($f);
+
+    return ptsb_tail_log_keep_lines($buffer, $n);
+}
+
+function ptsb_tail_log_read_append(string $path, int $from, int $to): ?string {
+    if ($to <= $from) {
+        return null;
+    }
+
+    $f = @fopen($path, 'rb');
+    if (!$f) {
+        return null;
+    }
+
+    if (@fseek($f, $from) !== 0) {
+        fclose($f);
+        return null;
+    }
+
+    $length = $to - $from;
+    $data = '';
+    while ($length > 0 && !feof($f)) {
+        $chunk = fread($f, min(8192, $length));
+        if ($chunk === false) {
+            break;
+        }
+        $data .= $chunk;
+        $length -= strlen($chunk);
+    }
+    fclose($f);
+
+    return $data;
+}
+
+function ptsb_tail_log_keep_lines(string $text, int $n): string {
+    $lines = preg_split('/\r?\n/', $text);
+    if ($lines === false) {
+        $lines = explode("\n", $text);
+    }
+    if (!empty($lines)) {
+        $last = end($lines);
+        if ($last === '') {
+            array_pop($lines);
+        }
+    }
     $lines = array_slice($lines, -$n);
-    return ptsb_to_utf8(implode("\n", $lines));
+    return implode("\n", $lines);
 }
 
 /* -------------------------------------------------------

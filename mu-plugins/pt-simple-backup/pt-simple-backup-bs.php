@@ -26,7 +26,24 @@ add_action('admin_menu', function () {
 });
 add_action('admin_enqueue_scripts', function($hook){
     if ($hook === 'tools_page_pt-simple-backup') {
+        $dir = plugin_dir_path(__FILE__);
+        $url = plugin_dir_url(__FILE__);
+
         wp_enqueue_style('dashicons');
+        wp_enqueue_style(
+            'ptsb-admin',
+            $url . 'assets/admin.css',
+            [],
+            @filemtime($dir . 'assets/admin.css') ?: null
+        );
+
+        wp_enqueue_script(
+            'ptsb-admin',
+            $url . 'assets/admin.js',
+            [],
+            @filemtime($dir . 'assets/admin.js') ?: null,
+            true
+        );
     }
 });
 

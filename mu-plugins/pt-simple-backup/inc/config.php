@@ -1,7 +1,17 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-function ptsb_cfg() {
+function ptsb_cfg(bool $refresh = false) {
+    static $cache = null;
+
+    if ($refresh) {
+        $cache = null;
+    }
+
+    if ($cache !== null) {
+        return $cache;
+    }
+
     $cfg = [
         'remote'         => 'gdrive_backup:',
         'prefix'         => 'wpb-',
@@ -11,8 +21,7 @@ function ptsb_cfg() {
         'script_restore' => '/home/plugintema.com/Scripts/wp-restore-from-archive.sh',
         'download_dir'   => '/home/plugintema.com/Backups/downloads',
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
-
-             'keep_days_def'  => 12,
+        'keep_days_def'  => 12,
 
         // agendamento
         'tz_string'      => 'America/Sao_Paulo',
@@ -22,10 +31,10 @@ function ptsb_cfg() {
         'min_gap_min'    => 10,
         'miss_window'    => 15,
         'queue_timeout'  => 5400,              // 90min
-        'log_max_mb' => 3, // tamanho máx. do log
-'log_keep'   => 5, // quantos arquivos rotacionados manter
-
+        'log_max_mb'     => 3,                 // tamanho máx. do log
+        'log_keep'       => 5,                 // quantos arquivos rotacionados manter
     ];
+
     /**
      * Filtros úteis:
      * - ptsb_config           : altera o array completo
@@ -37,7 +46,80 @@ function ptsb_cfg() {
     $cfg = apply_filters('ptsb_config', $cfg);
     $cfg['remote'] = apply_filters('ptsb_remote', $cfg['remote']);
     $cfg['prefix'] = apply_filters('ptsb_prefix', $cfg['prefix']);
-    return $cfg;
+
+    $cache = $cfg;
+
+    return $cache;
+}
+
+function ptsb_cfg_flush(): void {
+    ptsb_cfg(true);
+}
+
+function ptsb_get_nonce(): string {
+    static $nonce = null;
+    if ($nonce === null) {
+        $nonce = wp_create_nonce('ptsb_nonce');
+    }
+    return $nonce;
+}
+
+function ptsb_shell_env_prefix(): string {
+    return '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
+}
+
+function ptsb_rclone_command(string $command): string {
+    $command = ltrim($command);
+    return ptsb_shell_env_prefix() . ' rclone ' . $command;
+}
+
+function ptsb_rclone_exec(string $command)
+{
+    return shell_exec(ptsb_rclone_command($command));
+}
+
+function ptsb_rclone_exec_input(string $command, string $input)
+{
+    $cmd = ptsb_rclone_command($command);
+    $descriptor = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+
+    $proc = proc_open($cmd, $descriptor, $pipes);
+    if (!is_resource($proc)) {
+        return false;
+    }
+
+    fwrite($pipes[0], $input);
+    fclose($pipes[0]);
+
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+
+    // discard stderr
+    if (is_resource($pipes[2])) {
+        stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+    }
+
+    proc_close($proc);
+
+    return $stdout;
+}
+
+function ptsb_remote_cache_flush(): void {
+    delete_transient('ptsb_totals_v1');
+    delete_transient('ptsb_remote_files_v1');
+    delete_transient('ptsb_keep_map_v1');
+}
+
+function ptsb_tail_cache_flush(string $path): void {
+    $hash = md5($path);
+    foreach ([50, 800] as $n) {
+        delete_transient('ptsb_tail_v1_' . $hash . '_' . $n);
+    }
 }
 
 /* -------------------------------------------------------
