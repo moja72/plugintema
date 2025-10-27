@@ -155,6 +155,128 @@ function ptsb_skipmap_gc(): void {
     ptsb_skipmap_save($keep);
 }
 
+/* -------------------------------------------------------
+ * Fila manual (disparo via painel -> cron)
+ * -----------------------------------------------------*/
+
+function ptsb_manual_job_default(): array {
+    return [
+        'id'            => '',
+        'status'        => 'idle',
+        'message'       => '',
+        'created_at'    => 0,
+        'scheduled_at'  => 0,
+        'started_at'    => 0,
+        'finished_at'   => 0,
+        'attempts'      => 0,
+        'payload'       => [],
+    ];
+}
+
+function ptsb_manual_job_get(): array {
+    $job = get_option('ptsb_manual_job', []);
+    if (!is_array($job)) { $job = []; }
+    $job = wp_parse_args($job, ptsb_manual_job_default());
+    if (!is_array($job['payload'])) { $job['payload'] = []; }
+    $job['status']  = (string)($job['status'] ?? 'idle');
+    $job['message'] = (string)($job['message'] ?? '');
+    return $job;
+}
+
+function ptsb_manual_job_save(array $job): void {
+    if (!is_array($job['payload'] ?? null)) {
+        $job['payload'] = [];
+    }
+    update_option('ptsb_manual_job', $job, false);
+}
+
+function ptsb_manual_job_is_active(array $job): bool {
+    $status = (string)($job['status'] ?? 'idle');
+    return in_array($status, ['pending','waiting_lock','running'], true);
+}
+
+function ptsb_manual_job_message(array $job): string {
+    $msg = (string)($job['message'] ?? '');
+    if ($msg !== '') {
+        return $msg;
+    }
+    $status = (string)($job['status'] ?? 'idle');
+    if ($status === 'idle') {
+        return 'Nenhum backup manual agendado.';
+    }
+    if ($status === 'completed') {
+        return 'Backup manual concluído.';
+    }
+    if ($status === 'failed') {
+        return 'Falha ao iniciar o backup manual.';
+    }
+    return '';
+}
+
+function ptsb_manual_job_response_payload(): array {
+    $job = ptsb_manual_job_get();
+    return [
+        'id'          => (string)$job['id'],
+        'status'      => (string)$job['status'],
+        'message'     => ptsb_manual_job_message($job),
+        'scheduled_at'=> (int)$job['scheduled_at'],
+        'started_at'  => (int)$job['started_at'],
+        'finished_at' => (int)$job['finished_at'],
+        'attempts'    => (int)$job['attempts'],
+    ];
+}
+
+function ptsb_manual_job_mark_completed(array $payload): void {
+    $origin = isset($payload['origin']) ? (string)$payload['origin'] : '';
+    if ($origin !== 'manual') {
+        return;
+    }
+
+    $job = ptsb_manual_job_get();
+    if ($job['id'] === '') {
+        return;
+    }
+
+    $intent = get_option('ptsb_last_run_intent', []);
+    $intent_id = '';
+    if (is_array($intent)) {
+        $intent_id = (string)($intent['job_id'] ?? '');
+    }
+    $payload_id = isset($payload['job_id']) ? (string)$payload['job_id'] : '';
+    if ($payload_id !== '' && $payload_id !== (string)$job['id']) {
+        return;
+    }
+    if ($intent_id && $intent_id !== (string)$job['id']) {
+        return;
+    }
+
+    $status = (string)$job['status'];
+    if (!in_array($status, ['running','waiting_lock','pending'], true)) {
+        return;
+    }
+
+    $finished_at = time();
+    $finished_iso = isset($payload['finished_at_iso']) ? (string)$payload['finished_at_iso'] : '';
+    if ($finished_iso !== '') {
+        try {
+            $dt = new DateTimeImmutable($finished_iso);
+            $finished_at = $dt->getTimestamp();
+        } catch (Throwable $e) {
+            // fallback silencioso
+        }
+    }
+
+    $msg_local = isset($payload['finished_at_local']) ? (string)$payload['finished_at_local'] : '';
+    $msg = $msg_local !== ''
+        ? sprintf('Backup manual concluído em %s.', $msg_local)
+        : 'Backup manual concluído.';
+
+    $job['status']      = 'completed';
+    $job['message']     = $msg;
+    $job['finished_at'] = (int)$finished_at;
+    ptsb_manual_job_save($job);
+}
+
 function ptsb_uuid4(){
     $d = random_bytes(16);
     $d[6] = chr((ord($d[6]) & 0x0f) | 0x40);
@@ -427,6 +549,66 @@ add_action('init', function(){
     }
 });
 
+
+add_action('ptsb_run_manual_backup', function($job_id){
+    $job = ptsb_manual_job_get();
+    if ($job['id'] === '' || (string)$job_id !== (string)$job['id']) {
+        return;
+    }
+
+    $status = (string)$job['status'];
+    if (!in_array($status, ['pending','waiting_lock'], true)) {
+        return;
+    }
+
+    $cfg = ptsb_cfg();
+
+    if (!ptsb_can_shell()) {
+        $job['status']      = 'failed';
+        $job['message']     = 'Não foi possível iniciar o backup (shell_exec indisponível).';
+        $job['finished_at'] = time();
+        ptsb_manual_job_save($job);
+        return;
+    }
+
+    if (file_exists($cfg['lock'])) {
+        $job['status']   = 'waiting_lock';
+        $job['message']  = 'Aguardando outro backup finalizar para iniciar.';
+        $job['attempts'] = (int)$job['attempts'] + 1;
+        ptsb_manual_job_save($job);
+        wp_schedule_single_event(time()+30, 'ptsb_run_manual_backup', [(string)$job['id']]);
+        return;
+    }
+
+    $payload        = is_array($job['payload']) ? $job['payload'] : [];
+    $partsCsv       = $payload['parts_csv'] ?? null;
+    $overridePrefix = $payload['prefix'] ?? null;
+    $keepDays       = $payload['keep_days'] ?? null;
+    $keepForever    = !empty($payload['keep_forever']);
+    $effectivePref  = $payload['effective_prefix'] ?? ($overridePrefix ?: ptsb_cfg()['prefix']);
+
+    if ($keepForever) {
+        ptsb_plan_mark_keep_next($effectivePref);
+    }
+
+    $job['status']     = 'running';
+    $job['message']    = 'Backup em execução. Acompanhe o progresso abaixo.';
+    $job['started_at'] = time();
+    $job['attempts']   = (int)$job['attempts'] + 1;
+    ptsb_manual_job_save($job);
+
+    $intent = [
+        'prefix'       => $effectivePref,
+        'keep_days'    => ($keepDays === null) ? (int)ptsb_settings()['keep_days'] : (int)$keepDays,
+        'keep_forever' => $keepForever ? 1 : 0,
+        'origin'       => 'manual',
+        'started_at'   => time(),
+        'job_id'       => (string)$job['id'],
+    ];
+    update_option('ptsb_last_run_intent', $intent, true);
+
+    ptsb_start_backup($partsCsv, $overridePrefix, $keepDays);
+});
 
 add_action('ptsb_cron_tick', function(){
     $cfg  = ptsb_cfg();

@@ -4,6 +4,25 @@
   display:inline-flex; align-items:center; gap:8px; margin:6px 0 !important;
 }
 
+.ptsb-manual-status{
+  margin-top:10px;
+  font-size:13px;
+  opacity:.9;
+}
+.ptsb-manual-status[data-state="pending"],
+.ptsb-manual-status[data-state="waiting_lock"]{
+  color:#f0ad4e;
+}
+.ptsb-manual-status[data-state="running"]{
+  color:#2271b1;
+}
+.ptsb-manual-status[data-state="completed"]{
+  color:#46b450;
+}
+.ptsb-manual-status[data-state="failed"]{
+  color:#d63638;
+}
+
 /* “Respiro” acima da grade + grade de horários (4 por linha) */
 .ptsb-times-grid{
   display:grid;

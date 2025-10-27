@@ -23,8 +23,10 @@ add_action('admin_post_ptsb_do', function () {
    /* ===== Disparar manual (topo) — lendo as letras D,P,T,W,S,M,O ===== */
 if ($act === 'backup_now') {
     if (!ptsb_can_shell()) { add_settings_error('ptsb', 'noshell', 'shell_exec desabilitado no PHP.', 'error'); ptsb_back(); }
-    if (file_exists($cfg['lock'])) {
-        add_settings_error('ptsb', 'bk_running', 'J&aacute; existe um backup em execu&ccedil;&atilde;o. Aguarde concluir antes de iniciar outro.', 'error');
+
+    $job = ptsb_manual_job_get();
+    if (ptsb_manual_job_is_active($job)) {
+        add_settings_error('ptsb', 'bk_running', 'J&aacute; existe um backup manual agendado ou em execu&ccedil;&atilde;o. Aguarde concluir antes de iniciar outro.', 'error');
         ptsb_back();
     }
 
@@ -74,24 +76,36 @@ $nick    = $manual_name !== '' ? ptsb_slug_prefix($manual_name) : '';
 $prefix  = $manual_name !== '' ? (ptsb_cfg()['prefix'] . $nick) : null;
 
 $effPrefix = ($prefix !== null && $prefix !== '') ? $prefix : ptsb_cfg()['prefix'];
-if (!empty($_POST['manual_keep_forever'])) {
-    ptsb_plan_mark_keep_next($effPrefix);
-}
+    $lock_active = file_exists($cfg['lock']);
 
-update_option('ptsb_last_run_intent', [
-    'prefix'       => $effPrefix,
-    'keep_days'    => (int)$manual_days,                      // usa exatamente o informado (0 ou >0)
-    'keep_forever' => $keep_forever ? 1 : 0,
-    'origin'       => 'manual',
-    'started_at'   => time(),
-], true);
+    $job_data = [
+        'id'           => ptsb_uuid4(),
+        'status'       => 'pending',
+        'message'      => $lock_active
+            ? 'Backup agendado. Ele será iniciado assim que o processo atual finalizar.'
+            : 'Backup agendado. Ele será iniciado em instantes pelo cron.',
+        'created_at'   => time(),
+        'scheduled_at' => time(),
+        'started_at'   => 0,
+        'finished_at'  => 0,
+        'attempts'     => 0,
+        'payload'      => [
+            'parts_csv'        => $partsCsv,
+            'prefix'           => $prefix,
+            'effective_prefix' => $effPrefix,
+            'keep_days'        => $manual_days,
+            'keep_forever'     => $keep_forever ? 1 : 0,
+            'letters'          => $letters,
+        ],
+    ];
 
-ptsb_start_backup($partsCsv, $prefix, $manual_days);
+    ptsb_manual_job_save($job_data);
+    wp_schedule_single_event(time() + 5, 'ptsb_run_manual_backup', [(string)$job_data['id']]);
 
 
     // 6) Mensagem
     $human = ptsb_parts_to_labels($partsCsv);
-    $txt = 'Backup disparado'.($human ? ' (incluindo: '.esc_html(implode(', ', $human)).')' : '').'. Acompanhe abaixo.';
+    $txt = 'Backup agendado'.($human ? ' (incluindo: '.esc_html(implode(', ', $human)).')' : '').($lock_active ? '. Ele iniciar&aacute; assim que o backup atual terminar.' : '. Ele ser&aacute; executado em background.');
     add_settings_error('ptsb', 'bk_started', $txt, 'updated');
     ptsb_back();
 }

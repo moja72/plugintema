@@ -361,10 +361,13 @@ function ptsb_maybe_notify_backup_done() {
             'origin'             => ($intent_origin ?: 'manual'),
             'routine_mode'       => $routine_mode,
             'keep_forever'       => ($keepDays === 0 ? 1 : 0),
+            'job_id'             => (string)($intent['job_id'] ?? ''),
         ];
 
         // dispara o evento; outro plugin/integração cuida de enviar e-mails
         do_action('ptsb_backup_done', $payload);
+
+        ptsb_manual_job_mark_completed($payload);
 
       // === FALLBACK de e-mail (só se NÃO houver OU pt_done OU pt_finished) ===
 if (!has_action('ptsb_backup_done') && !has_action('ptsb_backup_finished') && function_exists('wp_mail')) {
