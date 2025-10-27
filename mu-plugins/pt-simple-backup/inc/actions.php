@@ -23,7 +23,7 @@ add_action('admin_post_ptsb_do', function () {
    /* ===== Disparar manual (topo) — lendo as letras D,P,T,W,S,M,O ===== */
 if ($act === 'backup_now') {
     if (!ptsb_can_shell()) { add_settings_error('ptsb', 'noshell', 'shell_exec desabilitado no PHP.', 'error'); ptsb_back(); }
-    if (file_exists($cfg['lock'])) {
+    if (ptsb_lock_is_active()) {
         add_settings_error('ptsb', 'bk_running', 'J&aacute; existe um backup em execu&ccedil;&atilde;o. Aguarde concluir antes de iniciar outro.', 'error');
         ptsb_back();
     }
