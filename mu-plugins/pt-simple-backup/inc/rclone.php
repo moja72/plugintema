@@ -359,43 +359,170 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge = true): b
 }
 
 /* -------------------------------------------------------
+ * Remote caches (fallbacks)
+ * -----------------------------------------------------*/
+
+function ptsb_remote_files_cache_get(): array {
+    $cache = get_option('ptsb_remote_files_cache_v1', []);
+    if (!is_array($cache)) {
+        return [];
+    }
+
+    $rows = $cache['rows'] ?? [];
+    if (!is_array($rows)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $file = isset($row['file']) ? (string) $row['file'] : '';
+        if ($file === '') {
+            continue;
+        }
+
+        $normalized[] = [
+            'time' => isset($row['time']) ? (string) $row['time'] : '',
+            'size' => isset($row['size']) ? (string) $row['size'] : '0',
+            'file' => $file,
+        ];
+    }
+
+    return $normalized;
+}
+
+function ptsb_remote_files_cache_store(array $rows): void {
+    $normalized = [];
+
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $file = isset($row['file']) ? (string) $row['file'] : '';
+        if ($file === '') {
+            continue;
+        }
+
+        $normalized[] = [
+            'time' => isset($row['time']) ? (string) $row['time'] : '',
+            'size' => isset($row['size']) ? (string) $row['size'] : '0',
+            'file' => $file,
+        ];
+    }
+
+    if (count($normalized) > 200) {
+        $normalized = array_slice($normalized, 0, 200);
+    }
+
+    update_option('ptsb_remote_files_cache_v1', [
+        'rows'       => $normalized,
+        'updated_at' => time(),
+    ], false);
+}
+
+function ptsb_drive_info_cache_get(): array {
+    $cache = get_option('ptsb_drive_info_cache_v1', []);
+    if (!is_array($cache)) {
+        return ['email' => '', 'used' => null, 'total' => null];
+    }
+
+    return [
+        'email' => isset($cache['email']) ? (string) $cache['email'] : '',
+        'used'  => array_key_exists('used', $cache) && $cache['used'] !== null ? (int) $cache['used'] : null,
+        'total' => array_key_exists('total', $cache) && $cache['total'] !== null ? (int) $cache['total'] : null,
+    ];
+}
+
+function ptsb_drive_info_cache_store(array $info): void {
+    $payload = [
+        'email'      => isset($info['email']) ? (string) $info['email'] : '',
+        'used'       => array_key_exists('used', $info) && $info['used'] !== null ? (int) $info['used'] : null,
+        'total'      => array_key_exists('total', $info) && $info['total'] !== null ? (int) $info['total'] : null,
+        'updated_at' => time(),
+    ];
+
+    update_option('ptsb_drive_info_cache_v1', $payload, false);
+}
+
+/* -------------------------------------------------------
  * Drive: quota e e-mail (best effort)
  * -----------------------------------------------------*/
 
 function ptsb_drive_info() {
-    $cfg  = ptsb_cfg();
-    $info = ['email' => '', 'used' => null, 'total' => null];
-    if (!ptsb_can_shell()) return $info;
+    $cfg       = ptsb_cfg();
+    $fallback  = ptsb_drive_info_cache_get();
+    $info      = ['email' => '', 'used' => null, 'total' => null];
+
+    if (!ptsb_can_shell()) {
+        return $fallback;
+    }
 
     $remote   = $cfg['remote'];
     $rem_name = rtrim($remote, ':');
 
     $aboutJson = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' --json 2>/dev/null', ['category' => 'info']);
-    $j = json_decode((string)$aboutJson, true);
+    $j = json_decode((string) $aboutJson, true);
     if (is_array($j)) {
-        if (isset($j['used']))  $info['used']  = (int)$j['used'];
-        if (isset($j['total'])) $info['total'] = (int)$j['total'];
+        if (isset($j['used'])) {
+            $info['used'] = (int) $j['used'];
+        }
+        if (isset($j['total'])) {
+            $info['total'] = (int) $j['total'];
+        }
     } else {
-        $txt = (string)ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null', ['category' => 'info']);
-        if (preg_match('/Used:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m))  $info['used']  = ptsb_size_to_bytes($m[1], $m[2]);
-        if (preg_match('/Total:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m)) $info['total'] = ptsb_size_to_bytes($m[1], $m[2]);
+        $txt = (string) ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null', ['category' => 'info']);
+        if (preg_match('/Used:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m)) {
+            $info['used'] = ptsb_size_to_bytes($m[1], $m[2]);
+        }
+        if (preg_match('/Total:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m)) {
+            $info['total'] = ptsb_size_to_bytes($m[1], $m[2]);
+        }
     }
 
-    $u = (string)ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null', ['category' => 'info']);
+    $uRaw = ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null', ['category' => 'info']);
+    $u    = (string) $uRaw;
     if (trim($u) === '') {
-        $u = (string)ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null', ['category' => 'info']);
+        $u = (string) ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null', ['category' => 'info']);
     }
+
     if ($u !== '') {
         $ju = json_decode($u, true);
         if (is_array($ju)) {
-            if (!empty($ju['email']))                     $info['email'] = $ju['email'];
-            elseif (!empty($ju['user']['email']))         $info['email'] = $ju['user']['email'];
-            elseif (!empty($ju['user']['emailAddress']))  $info['email'] = $ju['user']['emailAddress'];
+            if (!empty($ju['email'])) {
+                $info['email'] = (string) $ju['email'];
+            } elseif (!empty($ju['user']['email'])) {
+                $info['email'] = (string) $ju['user']['email'];
+            } elseif (!empty($ju['user']['emailAddress'])) {
+                $info['email'] = (string) $ju['user']['emailAddress'];
+            }
         } else {
-            if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $u, $m)) $info['email'] = $m[0];
+            if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $u, $m)) {
+                $info['email'] = $m[0];
+            }
         }
     }
-    return $info;
+
+    if ($info['used'] === null && $fallback['used'] !== null) {
+        $info['used'] = $fallback['used'];
+    }
+    if ($info['total'] === null && $fallback['total'] !== null) {
+        $info['total'] = $fallback['total'];
+    }
+    if ($info['email'] === '' && $fallback['email'] !== '') {
+        $info['email'] = $fallback['email'];
+    }
+
+    $hasData = ($info['used'] !== null || $info['total'] !== null || $info['email'] !== '');
+    if ($hasData) {
+        ptsb_drive_info_cache_store($info);
+        return $info;
+    }
+
+    return $fallback;
 }
 
 /* -------------------------------------------------------
@@ -424,8 +551,12 @@ function ptsb_apply_keep_sidecar($file){
  * -----------------------------------------------------*/
 
 function ptsb_list_remote_files(bool $force_refresh = false): array {
-    $cfg = ptsb_cfg();
-    if (!ptsb_can_shell()) { return []; }
+    $cfg      = ptsb_cfg();
+    $fallback = ptsb_remote_files_cache_get();
+
+    if (!ptsb_can_shell()) {
+        return $fallback;
+    }
 
     $key = 'ptsb_remote_files_v1';
     if (!$force_refresh) {
@@ -439,13 +570,23 @@ function ptsb_list_remote_files(bool $force_refresh = false): array {
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
          . ' --include ' . escapeshellarg('*.tar.gz');
     $out = ptsb_rclone_exec($cmd, ['category' => 'list', 'fast_list' => true]);
-    $rows = [];
-    foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $ln) {
-        $parts = explode(';', $ln, 3);
-        if (count($parts) === 3) $rows[] = ['time'=>$parts[0], 'size'=>$parts[1], 'file'=>$parts[2]];
+    if ($out === null) {
+        return $fallback;
     }
-    usort($rows, fn($a,$b) => strcmp($b['time'], $a['time']));
+
+    $rows = [];
+    foreach (array_filter(array_map('trim', explode("\n", (string) $out))) as $ln) {
+        $parts = explode(';', $ln, 3);
+        if (count($parts) === 3) {
+            $rows[] = ['time' => $parts[0], 'size' => $parts[1], 'file' => $parts[2]];
+        }
+    }
+
+    usort($rows, fn($a, $b) => strcmp($b['time'], $a['time']));
+
     set_transient($key, $rows, 5 * MINUTE_IN_SECONDS);
+    ptsb_remote_files_cache_store($rows);
+
     return $rows;
 }
 
