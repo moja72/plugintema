@@ -228,13 +228,14 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
 
 <!-- Filtro "Exibindo N de M" -->
  <!-- “Exibindo N de M” -->
-  <form method="get" id="ptsb-last-per-form" class="ptsb-list-controls" style="margin:0">
+  <?php $shown = count($rows_page); ?>
+  <form method="get" id="ptsb-backup-per-form" class="ptsb-list-controls" style="margin:0">
     <input type="hidden" name="page" value="pt-simple-backup">
-    <input type="hidden" name="tab"  value="last">
-    <input type="hidden" name="page_last" value="1">
-    <span>Exibindo</span>
-    <input type="number" name="per_last" min="1" max="500" value="<?php echo (int)$per_last; ?>" style="width:auto">
-    <span>de <?php echo (int)$total_last; ?> execuções — página <?php echo (int)$page_last; ?> de <?php echo (int)$total_pages_l; ?></span>
+    <input type="hidden" name="tab"  value="backup">
+    <input type="hidden" name="paged" value="1">
+    <span>Exibindo <?php echo number_format_i18n($shown); ?> de <?php echo number_format_i18n($total); ?> arquivos — página <?php echo number_format_i18n($paged); ?> de <?php echo number_format_i18n($total_pages); ?> — mostrar</span>
+    <input type="number" name="per" min="1" max="500" value="<?php echo (int)$per; ?>" style="width:auto">
+    <span>por página</span>
   </form>
 </div>
 
