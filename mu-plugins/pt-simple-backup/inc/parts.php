@@ -33,20 +33,6 @@ function ptsb_ui_default_codes(){
     return apply_filters('ptsb_default_ui_codes', $def);
 }
 
-function ptsb_map_ui_codes_to_parts(array $codes): array {
-    $codes = array_unique(array_map('strtolower', $codes));
-    $parts = [];
-    if (in_array('d',$codes,true)) $parts[] = 'db';
-    if (in_array('p',$codes,true)) $parts[] = 'plugins';
-    if (in_array('t',$codes,true)) $parts[] = 'themes';
-    if (in_array('m',$codes,true)) $parts[] = 'uploads';
-    if (in_array('w',$codes,true)) $parts[] = 'core';             // só core
-    if (in_array('s',$codes,true)) $parts[] = 'scripts';
-    if (in_array('o',$codes,true)) { $parts[]='others'; $parts[]='config'; $parts[]='langs'; }
-    $parts = array_values(array_unique($parts));
-    return apply_filters('ptsb_map_ui_codes_to_parts', $parts, $codes);
-}
-
 function ptsb_letter_meta($L){
     switch (strtoupper(trim((string)$L))) {
         case 'D': return ['class'=>'dashicons-database',         'label'=>'Banco'];

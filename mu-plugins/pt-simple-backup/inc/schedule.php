@@ -1122,9 +1122,7 @@ if (!$cycles) {
     // Se tem fila pendente e não está rodando, executa-a
     if (!$running && !empty($state['queued']['time'])) {
         $letters = (array)$state['queued']['letters'];
-        $partsCsv = function_exists('ptsb_letters_to_parts_csv')
-            ? ptsb_letters_to_parts_csv($letters)
-            : implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower',$letters)));
+        $partsCsv = ptsb_letters_to_parts_csv($letters);
         
             $qpref = $state['queued']['prefix'] ?? null;
 $qdays = $state['queued']['keep_days'] ?? null;
@@ -1284,9 +1282,7 @@ $cy_days     = (isset($raw_days) && !$cy_forever) ? max(1, (int)$raw_days) : nul
             }
 
             // dispara agora
-            $partsCsv = function_exists('ptsb_letters_to_parts_csv')
-                ? ptsb_letters_to_parts_csv($letters)
-                : implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower',$letters)));
+            $partsCsv = ptsb_letters_to_parts_csv($letters);
             ptsb_log('Backup (rotinas) às '.$slot['time'].' (BRT).');
             //  "sempre manter" (rotina em execução imediata)
 if (!empty($slot['keep_forever'])) {
@@ -1488,11 +1484,7 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
             ['D','P','T','W','S','M','O']
         ));
         if (!$letters) { $letters = array_map('strtoupper', ptsb_ui_default_codes()); }
-        if (function_exists('ptsb_letters_to_parts_csv')) {
-            $partsCsv = ptsb_letters_to_parts_csv($letters);
-        } else {
-            $partsCsv = implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower', $letters)));
-        }
+        $partsCsv = ptsb_letters_to_parts_csv($letters);
     }
 
     // 2) fallback final personalizável

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.14] - 2025-10-28
+### Removed
+- Eliminamos fallbacks legados que reconstruíam `PARTS` a partir das letras selecionadas, confiando na função atual `ptsb_letters_to_parts_csv`.
+- Removemos o helper `ptsb_map_ui_codes_to_parts`, que não era mais utilizado após a migração da interface.
+
 ## [0.8.13] - 2025-11-03
 ### Changed
 - Removemos comentários e blocos redundantes da UI, mantendo a página de backup mais enxuta sem perder funcionalidades.
