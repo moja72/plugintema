@@ -1128,6 +1128,40 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
         $env .= $name . '=' . escapeshellarg((string)$value) . ' ';
     }
 
+    if (defined('DB_NAME')) {
+        $env .= 'DB_NAME=' . escapeshellarg(DB_NAME) . ' ';
+    }
+    if (defined('DB_USER')) {
+        $env .= 'DB_USER=' . escapeshellarg(DB_USER) . ' ';
+    }
+    if (defined('DB_PASSWORD')) {
+        $env .= 'DB_PASSWORD=' . escapeshellarg(DB_PASSWORD) . ' ';
+    }
+    if (defined('DB_HOST')) {
+        $env .= 'DB_HOST=' . escapeshellarg(DB_HOST) . ' ';
+    }
+    if (defined('DB_CHARSET')) {
+        $env .= 'DB_CHARSET=' . escapeshellarg(DB_CHARSET) . ' ';
+    }
+    if (defined('DB_COLLATE') && DB_COLLATE !== '') {
+        $env .= 'DB_COLLATE=' . escapeshellarg(DB_COLLATE) . ' ';
+    }
+
+    if (!empty($cfg['mysqldump_bin'])) {
+        $env .= 'MYSQLDUMP_BIN=' . escapeshellarg((string)$cfg['mysqldump_bin']) . ' ';
+    }
+
+    $jobMeta = is_array($meta['meta'] ?? null) ? $meta['meta'] : [];
+    if (!empty($jobMeta['job_id'])) {
+        $env .= 'JOB_ID=' . escapeshellarg((string)$jobMeta['job_id']) . ' ';
+    }
+    if (!empty($jobMeta['origin'])) {
+        $env .= 'RUN_ORIGIN=' . escapeshellarg((string)$jobMeta['origin']) . ' ';
+    }
+    if (!empty($jobMeta['original_parts_csv'])) {
+        $env .= 'ORIGINAL_PARTS=' . escapeshellarg((string)$jobMeta['original_parts_csv']) . ' ';
+    }
+
     $chunk = is_array($meta['chunk'] ?? null) ? $meta['chunk'] : [];
     $total = (int)($chunk['total'] ?? 1);
     $index = (int)($chunk['index'] ?? 1);
