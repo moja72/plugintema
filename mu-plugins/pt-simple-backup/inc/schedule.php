@@ -277,6 +277,22 @@ function ptsb_manual_job_mark_completed(array $payload): void {
     ptsb_manual_job_save($job);
 }
 
+function ptsb_manual_job_mark_failed(string $message): void {
+    $job = ptsb_manual_job_get();
+    if ($job['id'] === '') {
+        return;
+    }
+
+    if (!ptsb_manual_job_is_active($job)) {
+        return;
+    }
+
+    $job['status']      = 'failed';
+    $job['message']     = $message;
+    $job['finished_at'] = time();
+    ptsb_manual_job_save($job);
+}
+
 function ptsb_uuid4(){
     $d = random_bytes(16);
     $d[6] = chr((ord($d[6]) & 0x0f) | 0x40);
@@ -287,6 +303,46 @@ function ptsb_uuid4(){
 /* -------------------------------------------------------
  * Chunking / fila de partes
  * -----------------------------------------------------*/
+
+function ptsb_chunk_plan_max_attempts(): int {
+    $max = (int) apply_filters('ptsb_chunk_max_attempts', 3);
+    return max(1, $max);
+}
+
+function ptsb_chunk_plan_retry_delay(int $attempt): int {
+    $base = (int) apply_filters('ptsb_chunk_retry_base_delay', 60);
+    $base = max(30, $base);
+    $delay = $base * (int) pow(2, max(0, $attempt - 1));
+    $delay = min($delay, (int) apply_filters('ptsb_chunk_retry_max_delay', 900));
+    $delay = (int) apply_filters('ptsb_chunk_retry_delay', $delay, $attempt);
+    return max(30, $delay);
+}
+
+function ptsb_chunk_plan_entry_normalize(array $entry): array {
+    $entry['parts'] = array_values(array_map('strval', (array)($entry['parts'] ?? [])));
+    $entry['parts_csv'] = isset($entry['parts_csv']) && $entry['parts_csv'] !== ''
+        ? (string) $entry['parts_csv']
+        : implode(',', $entry['parts']);
+    $entry['index'] = isset($entry['index']) ? (int) $entry['index'] : 1;
+    $entry['total'] = isset($entry['total']) ? (int) $entry['total'] : max(1, count($entry['parts']) ? 1 : 0);
+    $entry['key'] = (string) ($entry['key'] ?? '');
+    $entry['attempts'] = max(0, (int) ($entry['attempts'] ?? 0));
+    $entry['next_run_at'] = isset($entry['next_run_at']) ? (int) $entry['next_run_at'] : 0;
+    $entry['started_at'] = isset($entry['started_at']) ? (int) $entry['started_at'] : 0;
+    $entry['last_error'] = isset($entry['last_error']) ? (string) $entry['last_error'] : '';
+    $entry['failed_at'] = isset($entry['failed_at']) ? (int) $entry['failed_at'] : 0;
+    return $entry;
+}
+
+function ptsb_chunk_plan_failure_label(array $chunk): string {
+    $partsCsv = (string) ($chunk['parts_csv'] ?? implode(',', (array) ($chunk['parts'] ?? [])));
+    $labels = $partsCsv !== '' ? ptsb_parts_to_labels($partsCsv) : [];
+    if ($labels) {
+        return implode(', ', $labels);
+    }
+    $key = (string) ($chunk['key'] ?? '');
+    return $key !== '' ? $key : 'partes';
+}
 
 function ptsb_chunk_plan_key(): string {
     return 'ptsb_chunk_plan_v1';
@@ -304,6 +360,7 @@ function ptsb_chunk_plan_get(): array {
         'current'         => null,
         'queue'           => [],
         'completed'       => [],
+        'failed'          => [],
         'original_parts'  => '',
     ];
 
@@ -317,8 +374,23 @@ function ptsb_chunk_plan_get(): array {
     if (!is_array($plan['completed'])) {
         $plan['completed'] = [];
     }
+    if (!is_array($plan['failed'])) {
+        $plan['failed'] = [];
+    }
     if (!is_array($plan['current'])) {
         $plan['current'] = null;
+    } else {
+        $plan['current'] = ptsb_chunk_plan_entry_normalize((array) $plan['current']);
+    }
+
+    foreach ($plan['queue'] as $idx => $entry) {
+        $plan['queue'][$idx] = ptsb_chunk_plan_entry_normalize((array) $entry);
+    }
+    foreach ($plan['completed'] as $idx => $entry) {
+        $plan['completed'][$idx] = ptsb_chunk_plan_entry_normalize((array) $entry);
+    }
+    foreach ($plan['failed'] as $idx => $entry) {
+        $plan['failed'][$idx] = ptsb_chunk_plan_entry_normalize((array) $entry);
     }
 
     return $plan;
@@ -395,7 +467,10 @@ function ptsb_chunk_plan_prepare(string $partsCsv, array $meta): array {
             'parts_csv'  => $partsCsv,
             'index'      => 1,
             'total'      => 1,
+            'attempts'   => 0,
+            'next_run_at'=> time(),
             'started_at' => time(),
+            'last_error' => '',
         ];
     }
 
@@ -408,6 +483,9 @@ function ptsb_chunk_plan_prepare(string $partsCsv, array $meta): array {
             'parts_csv'  => implode(',', $item['parts']),
             'index'      => $idx + 1,
             'total'      => $total,
+            'attempts'   => 0,
+            'next_run_at'=> time(),
+            'last_error' => '',
         ];
         if ($idx === 0) {
             $current = $entry;
@@ -437,8 +515,29 @@ function ptsb_chunk_plan_prepare(string $partsCsv, array $meta): array {
 
 function ptsb_chunk_plan_schedule_next(): void {
     $hook = 'ptsb_run_chunk_next';
-    if (!wp_next_scheduled($hook)) {
-        wp_schedule_single_event(time() + 30, $hook);
+    $plan = ptsb_chunk_plan_get();
+    $now  = time();
+    $delay = 30;
+
+    if (!empty($plan['queue'])) {
+        $next = $plan['queue'][0];
+        $ready = (int)($next['next_run_at'] ?? 0);
+        if ($ready > $now) {
+            $delay = max(5, $ready - $now);
+        } else {
+            $delay = 5;
+        }
+    } else {
+        $delay = 30;
+    }
+
+    $when = $now + $delay;
+    $scheduled = wp_next_scheduled($hook);
+    if (!$scheduled || $scheduled > $when) {
+        if ($scheduled) {
+            wp_unschedule_event($scheduled, $hook);
+        }
+        wp_schedule_single_event($when, $hook);
     }
 }
 
@@ -448,11 +547,25 @@ function ptsb_chunk_plan_trigger_next(): void {
         return;
     }
 
+    $peek = $plan['queue'][0];
+    $ready = (int)($peek['next_run_at'] ?? 0);
+    if ($ready > time()) {
+        ptsb_chunk_plan_save($plan);
+        ptsb_chunk_plan_schedule_next();
+        return;
+    }
+
     $current = array_shift($plan['queue']);
     $current['parts_csv']  = implode(',', $current['parts']);
     $current['started_at'] = time();
     $plan['current'] = $current;
     ptsb_chunk_plan_save($plan);
+
+    if ((int)$current['attempts'] > 0) {
+        $attempt = (int)$current['attempts'] + 1;
+        $label = ptsb_chunk_plan_failure_label($current);
+        ptsb_log(sprintf('[chunk] Reprocessando %s (tentativa %d).', $label, $attempt));
+    }
 
     $meta        = $plan['meta'];
     $prefix      = (string)($meta['prefix'] ?? ptsb_cfg()['prefix']);
@@ -466,12 +579,100 @@ function ptsb_chunk_plan_trigger_next(): void {
     ];
 
     if (!ptsb_run_backup_job($current['parts_csv'], $prefix, $keepDays, $keepForever, $extraEnv, ['chunk'=>$current, 'meta'=>$meta])) {
-        // Falhou em disparar próximo chunk: devolve ao início da fila
-        $plan = ptsb_chunk_plan_get();
-        $plan['current'] = null;
-        array_unshift($plan['queue'], $current);
-        ptsb_chunk_plan_save($plan);
+        ptsb_chunk_plan_mark_failure('Não foi possível iniciar o processo para esta parte.', ['error_hash' => '', 'permanent' => false]);
     }
+}
+
+function ptsb_chunk_plan_mark_failure(string $message, array $opts = []): void {
+    $plan = ptsb_chunk_plan_get();
+    if (empty($plan['active']) || !is_array($plan['current'])) {
+        return;
+    }
+
+    $current = ptsb_chunk_plan_entry_normalize((array) $plan['current']);
+    $plan['current'] = null;
+
+    $attempts = (int) $current['attempts'] + 1;
+    $current['attempts'] = $attempts;
+    $current['last_error'] = $message;
+    $current['failed_at'] = time();
+    $plan['meta']['last_error_hash'] = (string) ($opts['error_hash'] ?? '');
+
+    $maxAttempts = ptsb_chunk_plan_max_attempts();
+    $permanent = !empty($opts['permanent']) || $attempts >= $maxAttempts;
+
+    if ($permanent) {
+        $current['permanent'] = true;
+        $plan['failed'][] = $current;
+        $label = ptsb_chunk_plan_failure_label($current);
+        ptsb_log(sprintf('[chunk] Falha permanente em %s após %d tentativas: %s', $label, $attempts, $message));
+
+        if (empty($plan['queue'])) {
+            $plan['active'] = false;
+        }
+
+        ptsb_chunk_plan_save($plan);
+
+        if (!empty($plan['queue'])) {
+            ptsb_chunk_plan_schedule_next();
+        }
+
+        $origin = (string)($plan['meta']['origin'] ?? '');
+        if ($origin === 'manual') {
+            $partsCsv = (string)($current['parts_csv'] ?? implode(',', (array)$current['parts']));
+            $labels = $partsCsv !== '' ? implode(', ', ptsb_parts_to_labels($partsCsv)) : $label;
+            if ($labels === '') {
+                $labels = $label;
+            }
+            $failMsg = sprintf('Backup manual falhou na parte %s após %d tentativas. Motivo: %s', $labels, $attempts, $message);
+            ptsb_manual_job_mark_failed($failMsg);
+        }
+
+        return;
+    }
+
+    $delay = ptsb_chunk_plan_retry_delay($attempts);
+    $current['next_run_at'] = time() + $delay;
+    array_unshift($plan['queue'], $current);
+    ptsb_chunk_plan_save($plan);
+    ptsb_chunk_plan_schedule_next();
+
+    $label = ptsb_chunk_plan_failure_label($current);
+    ptsb_log(sprintf('[chunk] Falha em %s. Nova tentativa %d/%d em %d segundos. Motivo: %s', $label, $attempts + 1, $maxAttempts, $delay, $message));
+}
+
+function ptsb_chunk_plan_watchdog(): void {
+    $plan = ptsb_chunk_plan_get();
+    if (empty($plan['active']) || !is_array($plan['current'])) {
+        return;
+    }
+
+    $current = ptsb_chunk_plan_entry_normalize((array) $plan['current']);
+    $started = (int) ($current['started_at'] ?? 0);
+    if ($started <= 0) {
+        return;
+    }
+
+    if (ptsb_lock_is_active()) {
+        return;
+    }
+
+    $grace = (int) apply_filters('ptsb_chunk_failure_grace', 180);
+    if (($started + $grace) > time()) {
+        return;
+    }
+
+    $error = ptsb_log_last_error_entry($started);
+    $reason = $error && !empty($error['message'])
+        ? (string) $error['message']
+        : 'Processo finalizado sem marcador de sucesso.';
+
+    $opts = [
+        'error_hash' => $error['hash'] ?? '',
+        'permanent'  => !empty($error['permanent']),
+    ];
+
+    ptsb_chunk_plan_mark_failure($reason, $opts);
 }
 
 function ptsb_chunk_plan_complete(string $file): array {
@@ -487,6 +688,7 @@ function ptsb_chunk_plan_complete(string $file): array {
             'meta'           => $plan['meta'],
             'remaining'      => count($plan['queue']),
             'completed'      => count($plan['completed']),
+            'failed'         => $plan['failed'],
             'original_parts' => (string)($plan['meta']['original_parts_csv'] ?? $plan['original_parts']),
             'noop'           => true,
         ];
@@ -507,6 +709,7 @@ function ptsb_chunk_plan_complete(string $file): array {
             'meta'           => $plan['meta'],
             'remaining'      => count($plan['queue']),
             'completed'      => count($plan['completed']),
+            'failed'         => $plan['failed'],
             'original_parts' => (string)($plan['meta']['original_parts_csv'] ?? $plan['original_parts']),
             'noop'           => false,
         ];
@@ -520,6 +723,7 @@ function ptsb_chunk_plan_complete(string $file): array {
         'meta'           => $plan['meta'],
         'remaining'      => 0,
         'completed'      => count($plan['completed']),
+        'failed'         => $plan['failed'],
         'original_parts' => (string)($plan['meta']['original_parts_csv'] ?? $plan['original_parts']),
         'noop'           => false,
     ];
@@ -856,6 +1060,8 @@ add_action('ptsb_cron_tick', function(){
     $now  = ptsb_now_brt();
     $today= $now->format('Y-m-d');
     $miss = (int)$cfg['miss_window'];
+
+    ptsb_chunk_plan_watchdog();
 
  $cycles = ptsb_cycles_get();
 if (!$cycles) {

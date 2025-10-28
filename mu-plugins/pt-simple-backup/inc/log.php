@@ -233,6 +233,64 @@ function ptsb_log_has_success_marker() {
     return false;
 }
 
+function ptsb_log_error_is_permanent(string $message): bool {
+    $patterns = [
+        '/mysqldump n[oã]o encontrado/i',
+        '/rclone n[oã]o encontrado/i',
+        '/tar n[oã]o encontrado/i',
+        '/REMOTE n[oã]o informado/i',
+        '/WP_PATH inv[áa]lido/i',
+        '/Nenhuma parte encontrada para arquivar/i',
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $message)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function ptsb_log_last_error_entry(int $since = 0): ?array {
+    $cfg  = ptsb_cfg();
+    $tail = (string) ptsb_tail_log_raw($cfg['log'], 800);
+    if ($tail === '') {
+        return null;
+    }
+
+    $lines = array_reverse(array_filter(array_map('trim', preg_split('/\r?\n/', $tail))));
+    foreach ($lines as $line) {
+        if ($line === '') {
+            continue;
+        }
+        if (stripos($line, 'ERROR:') === false) {
+            continue;
+        }
+
+        $ts = 0;
+        if (preg_match('/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/', $line, $m)) {
+            $ts = strtotime($m[1]) ?: 0;
+        }
+        if ($since > 0 && $ts > 0 && $ts < ($since - 5)) {
+            continue;
+        }
+
+        $pos = stripos($line, 'ERROR:');
+        $message = $pos !== false ? trim(substr($line, $pos + 6)) : $line;
+
+        return [
+            'line'      => $line,
+            'message'   => $message,
+            'timestamp' => $ts,
+            'hash'      => md5($line),
+            'permanent' => ptsb_log_error_is_permanent($message),
+        ];
+    }
+
+    return null;
+}
+
 function ptsb_notifications_storage_dir(): ?string {
     $uploads = wp_upload_dir();
     if (!empty($uploads['error'])) {
@@ -352,6 +410,22 @@ function ptsb_maybe_notify_backup_done() {
         $remaining = (int)($chunkState['remaining'] ?? 0);
         ptsb_log(sprintf('[chunk] Parte concluída (%d/%d). Aguardando próximo chunk.', $completed, $completed + $remaining));
         return;
+    }
+    $chunkFailures = [];
+    if (isset($chunkState['failed']) && is_array($chunkState['failed'])) {
+        $chunkFailures = $chunkState['failed'];
+    }
+    if ($chunkFailures) {
+        foreach ($chunkFailures as $failure) {
+            $partsCsv = (string)($failure['parts_csv'] ?? implode(',', (array)($failure['parts'] ?? [])));
+            $partsLbl = $partsCsv !== '' ? implode(', ', ptsb_parts_to_labels($partsCsv)) : (string)($failure['key'] ?? 'partes');
+            if ($partsLbl === '') {
+                $partsLbl = 'partes';
+            }
+            $attempts = max(1, (int)($failure['attempts'] ?? 1));
+            $msg = (string)($failure['last_error'] ?? 'Falha permanente na etapa.');
+            ptsb_log(sprintf('[chunk] Exceção permanente (%s, tentativa %d): %s', $partsLbl, $attempts, $msg));
+        }
     }
     $chunkOriginalParts = (string)($chunkState['original_parts'] ?? '');
 
