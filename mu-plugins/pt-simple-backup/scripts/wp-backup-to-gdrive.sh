@@ -135,6 +135,21 @@ PARTS_RAW="${PARTS:-}"
 PREFIX="${PREFIX:-wpb-}"
 KEEP_DAYS="${KEEP_DAYS:-${KEEP:-0}}"
 KEEP_FOREVER="${KEEP_FOREVER:-0}"
+COMPRESSION_LEVEL_RAW="${COMPRESSION_LEVEL:-6}"
+COMPRESSION_LEVEL_FLAG=""
+
+if [[ "$COMPRESSION_LEVEL_RAW" =~ ^-?[0-9]$ ]]; then
+  if [[ "$COMPRESSION_LEVEL_RAW" == -* ]]; then
+    COMPRESSION_LEVEL_FLAG="$COMPRESSION_LEVEL_RAW"
+  else
+    COMPRESSION_LEVEL_FLAG="-$COMPRESSION_LEVEL_RAW"
+  fi
+else
+  log "COMPRESSION_LEVEL inválido ('${COMPRESSION_LEVEL_RAW}'), usando -6"
+  COMPRESSION_LEVEL_FLAG="-6"
+fi
+
+[[ -z "$COMPRESSION_LEVEL_FLAG" ]] && COMPRESSION_LEVEL_FLAG="-6"
 
 [[ -z "$REMOTE" ]] && fail "REMOTE não informado"
 [[ -z "$WP_PATH" ]] && fail "WP_PATH não informado"
@@ -210,13 +225,13 @@ PHP
 
   metrics_step_begin "compress_db"
   if command -v pigz >/dev/null 2>&1; then
-    log "Compressing DB dump with pigz"
-    pigz -9 "$SQL_FILE"
+    log "Compressing DB dump with pigz $COMPRESSION_LEVEL_FLAG"
+    pigz "$COMPRESSION_LEVEL_FLAG" "$SQL_FILE"
     SQL_FILE+=".gz"
     SQL_LABEL="database.sql.gz"
   else
-    log "Compressing DB dump with gzip"
-    gzip -9 "$SQL_FILE"
+    log "Compressing DB dump with gzip $COMPRESSION_LEVEL_FLAG"
+    gzip "$COMPRESSION_LEVEL_FLAG" "$SQL_FILE"
     SQL_FILE+=".gz"
     SQL_LABEL="database.sql.gz"
   fi
@@ -293,11 +308,11 @@ metrics_step_end "archive_bundle"
 
 metrics_step_begin "compress_bundle"
 if command -v pigz >/dev/null 2>&1; then
-  log "Compressing bundle with pigz"
-  pigz -9 "$BUNDLE_TAR"
+  log "Compressing bundle with pigz $COMPRESSION_LEVEL_FLAG"
+  pigz "$COMPRESSION_LEVEL_FLAG" "$BUNDLE_TAR"
 else
-  log "Compressing bundle with gzip"
-  gzip -9 "$BUNDLE_TAR"
+  log "Compressing bundle with gzip $COMPRESSION_LEVEL_FLAG"
+  gzip "$COMPRESSION_LEVEL_FLAG" "$BUNDLE_TAR"
 fi
 metrics_step_end "compress_bundle"
 
@@ -338,6 +353,13 @@ apply_retention() {
   [[ -z "$cutoff" ]] && return
 
   log "Applying retention (${keep}d)"
+  mapfile -t keep_markers < <(rclone lsf "$REMOTE_TRIM" --files-only --include "*.tar.gz.keep" 2>/dev/null || true)
+  declare -A KEEP_SIDECARS=()
+  for keep_file in "${keep_markers[@]}"; do
+    [[ -z "$keep_file" ]] && continue
+    KEEP_SIDECARS["$keep_file"]=1
+  done
+
   mapfile -t entries < <(rclone lsf "$REMOTE_TRIM" --files-only --format "pt" --separator ";" --include "*.tar.gz" 2>/dev/null || true)
   for entry in "${entries[@]}"; do
     [[ -z "$entry" ]] && continue
@@ -349,9 +371,7 @@ apply_retention() {
     if (( epoch < cutoff )); then
       local keep_sidecar
       keep_sidecar="${file}.keep"
-      local keep_exists
-      keep_exists=$(rclone lsf "$REMOTE_TRIM" --files-only --include "$keep_sidecar" 2>/dev/null || true)
-      if [[ -n "$keep_exists" ]]; then
+      if [[ -n "${KEEP_SIDECARS[$keep_sidecar]:-}" ]]; then
         log "Retention: pulando $file (keep ativo)"
         continue
       fi
