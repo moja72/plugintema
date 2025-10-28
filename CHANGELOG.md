@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.15] - 2025-10-28
+### Changed
+- Carregamos o mapa de arquivos com marca `.keep` sob demanda na rotina de notificação, evitando chamadas remotas desnecessárias e mantendo a criação do sidecar para backups "Sempre manter".
+
 ## [0.8.14] - 2025-10-28
 ### Removed
 - Eliminamos estilos legados e variáveis JavaScript não utilizadas para manter os assets do painel mais leves.
