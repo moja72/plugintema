@@ -121,7 +121,7 @@ $effPrefix = ($prefix !== null && $prefix !== '') ? $prefix : ptsb_cfg()['prefix
         // retenção (apenas por dias)
         $d = isset($_POST['keep_days']) ? (int) $_POST['keep_days'] : $cfg['keep_days_def'];
         $d = max(1, min($d, 3650));
-        update_option('ptsb_keep_days', $d, true);
+        update_option('ptsb_keep_days', $d, false);
       
         // ======= modo/frequência =======
         $en   = !empty($_POST['auto_enabled']);
@@ -473,7 +473,7 @@ add_action('admin_post_ptsb_cycles', function(){
         $valid = [12,24,36];
         $n = (int)($_POST['preview_count'] ?? 12);
         if (!in_array($n, $valid, true)) { $n = 12; }
-        update_option('ptsb_preview_count', $n, true);
+        update_option('ptsb_preview_count', $n, false);
 
         // mantém globais fixos por código (merge=false, policy=queue, min-gap=10)
         add_settings_error('ptsb','cg_ok','Preferências salvas.', 'updated');
@@ -521,7 +521,7 @@ add_action('admin_post_ptsb_cycles', function(){
     $id = sanitize_text_field($_POST['id'] ?? '');
     $cycles = array_values(array_filter($cycles, fn($c)=>$c['id'] !== $id));
     ptsb_cycles_save($cycles);
-    update_option('ptsb_cycles_legacy_migrated', 1, true); // garante que não remigre
+    update_option('ptsb_cycles_legacy_migrated', 1, false); // garante que não remigre
     add_settings_error('ptsb','cx_del','Rotina removida.','updated');
     ptsb_back();
 }

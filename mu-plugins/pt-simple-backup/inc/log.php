@@ -233,6 +233,68 @@ function ptsb_log_has_success_marker() {
     return false;
 }
 
+function ptsb_notifications_storage_dir(): ?string {
+    $uploads = wp_upload_dir();
+    if (!empty($uploads['error'])) {
+        return null;
+    }
+
+    $dir = trailingslashit($uploads['basedir']) . 'pt-simple-backup/';
+    if (!wp_mkdir_p($dir)) {
+        return null;
+    }
+
+    return $dir;
+}
+
+function ptsb_last_notified_payload_file(): ?string {
+    $dir = ptsb_notifications_storage_dir();
+    if ($dir === null) {
+        return null;
+    }
+
+    return $dir . 'last-notified-payload.json';
+}
+
+function ptsb_store_last_notified_payload(array $payload): void {
+    $file   = ptsb_last_notified_payload_file();
+    $stored = false;
+
+    if ($file !== null) {
+        $json = wp_json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($json)) {
+            $json = json_encode($payload);
+        }
+
+        if (is_string($json)) {
+            $tmpFile = $file . '.tmp';
+            $written = @file_put_contents($tmpFile, $json, LOCK_EX);
+            if ($written !== false && @rename($tmpFile, $file)) {
+                $stored = true;
+            } else {
+                @unlink($tmpFile);
+                $stored = (@file_put_contents($file, $json, LOCK_EX) !== false);
+            }
+        }
+    }
+
+    if ($stored) {
+        update_option('ptsb_last_notified_payload_meta', [
+            'storage'    => 'file',
+            'file'       => $file ? basename($file) : '',
+            'updated_at' => time(),
+        ], false);
+        delete_option('ptsb_last_notified_payload');
+        return;
+    }
+
+    update_option('ptsb_last_notified_payload', $payload, false);
+    update_option('ptsb_last_notified_payload_meta', [
+        'storage'    => 'option',
+        'updated_at' => time(),
+    ], false);
+}
+
 function ptsb_maybe_notify_backup_done() {
     $cfg = ptsb_cfg();
 
@@ -394,8 +456,8 @@ if (!has_action('ptsb_backup_done') && !has_action('ptsb_backup_finished') && fu
 
 
         // marca como notificado
-        update_option('ptsb_last_notified_backup_file', (string)$latest['file'], true);
-        update_option('ptsb_last_notified_payload', $payload, true);
+        update_option('ptsb_last_notified_backup_file', (string)$latest['file'], false);
+        ptsb_store_last_notified_payload($payload);
 
         ptsb_log('[notify] evento disparado para '.$latest['file']);
     } finally {
@@ -436,5 +498,37 @@ function ptsb_notify_send_email_fallback(array $payload) {
 
     // texto simples
     @wp_mail($to, $assunto, $body);
+}
+
+add_filter('pre_option_ptsb_last_notified_payload', 'ptsb_pre_option_last_notified_payload');
+
+function ptsb_pre_option_last_notified_payload($pre) {
+    $meta = get_option('ptsb_last_notified_payload_meta', []);
+    if (!is_array($meta) || ($meta['storage'] ?? '') !== 'file') {
+        return $pre;
+    }
+
+    $file = (string)($meta['file'] ?? '');
+    if ($file === '') {
+        return $pre;
+    }
+
+    $dir = ptsb_notifications_storage_dir();
+    if ($dir === null) {
+        return $pre;
+    }
+
+    $path = $dir . basename($file);
+    if (!@file_exists($path)) {
+        return $pre;
+    }
+
+    $json = @file_get_contents($path);
+    if (!is_string($json) || $json === '') {
+        return $pre;
+    }
+
+    $data = json_decode($json, true);
+    return is_array($data) ? $data : $pre;
 }
 
