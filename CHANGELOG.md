@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.14] - 2025-10-28
+### Removed
+- Eliminamos estilos legados e variáveis JavaScript não utilizadas para manter os assets do painel mais leves.
+
 ## [0.8.13] - 2025-11-03
 ### Changed
 - Removemos comentários e blocos redundantes da UI, mantendo a página de backup mais enxuta sem perder funcionalidades.
