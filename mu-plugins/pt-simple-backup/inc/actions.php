@@ -51,12 +51,7 @@ if ($act === 'backup_now') {
     update_option('ptsb_last_parts_ui', implode(',', $letters), true);
 
     // 3) Montar PARTS= para o script
-    if (function_exists('ptsb_letters_to_parts_csv')) {
-        $partsCsv = ptsb_letters_to_parts_csv($letters);
-    } else {
-        // fallback (se PARTE 2 não existir por algum motivo)
-        $partsCsv = implode(',', ptsb_map_ui_codes_to_parts(array_map('strtolower', $letters)));
-    }
+    $partsCsv = ptsb_letters_to_parts_csv($letters);
 
 // 4) Nome e retenção (Backup Manual) — obrigatório, salvo se "Sempre manter"
 $manual_name  = sanitize_text_field($_POST['manual_name'] ?? '');
