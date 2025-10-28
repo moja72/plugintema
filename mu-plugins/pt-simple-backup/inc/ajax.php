@@ -8,13 +8,24 @@ if (!defined('ABSPATH')) { exit; }
 
 
 add_action('wp_ajax_ptsb_status', function () {
+    if (!defined('DONOTCACHEPAGE')) {
+        define('DONOTCACHEPAGE', true);
+    }
+    if (!defined('DONOTCDN')) {
+        define('DONOTCDN', true);
+    }
+    if (!defined('DONOTCACHEDB')) {
+        define('DONOTCACHEDB', true);
+    }
+
     // no-cache também no AJAX
     nocache_headers();
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
     if (!current_user_can('manage_options')) wp_send_json_error('forbidden', 403);
-    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
-    if (!wp_verify_nonce($nonce, 'ptsb_nonce')) wp_send_json_error('bad nonce', 403);
+    if (!check_ajax_referer('ptsb_nonce', 'nonce', false)) {
+        wp_send_json_error('bad nonce', 403);
+    }
 
     $cfg  = ptsb_cfg();
     $tail = ptsb_tail_log_raw($cfg['log'], 50);
@@ -54,12 +65,23 @@ add_action('wp_ajax_ptsb_status', function () {
 });
 
 add_action('wp_ajax_ptsb_details_batch', function () {
+    if (!defined('DONOTCACHEPAGE')) {
+        define('DONOTCACHEPAGE', true);
+    }
+    if (!defined('DONOTCDN')) {
+        define('DONOTCDN', true);
+    }
+    if (!defined('DONOTCACHEDB')) {
+        define('DONOTCACHEDB', true);
+    }
+
     nocache_headers();
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
     if (!current_user_can('manage_options')) wp_send_json_error('forbidden', 403);
-    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
-    if (!wp_verify_nonce($nonce, 'ptsb_nonce')) wp_send_json_error('bad nonce', 403);
+    if (!check_ajax_referer('ptsb_nonce', 'nonce', false)) {
+        wp_send_json_error('bad nonce', 403);
+    }
 
     $files = isset($_POST['files']) ? (array)$_POST['files'] : [];
     $files = array_values(array_filter(array_map('sanitize_text_field', $files)));

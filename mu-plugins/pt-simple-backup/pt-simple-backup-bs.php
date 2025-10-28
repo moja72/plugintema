@@ -24,27 +24,29 @@ if (!defined('ABSPATH')) { exit; }
 add_action('admin_menu', function () {
     add_management_page('Backup', 'Backup', 'manage_options', 'pt-simple-backup', 'ptsb_render_backup_page'); // ptsb_render_backup_page é definida na PARTE 2
 });
-add_action('admin_enqueue_scripts', function($hook){
-    if ($hook === 'tools_page_pt-simple-backup') {
-        $dir = plugin_dir_path(__FILE__);
-        $url = plugin_dir_url(__FILE__);
-
-        wp_enqueue_style('dashicons');
-        wp_enqueue_style(
-            'ptsb-admin',
-            $url . 'assets/admin.css',
-            [],
-            @filemtime($dir . 'assets/admin.css') ?: null
-        );
-
-        wp_enqueue_script(
-            'ptsb-admin',
-            $url . 'assets/admin.js',
-            [],
-            @filemtime($dir . 'assets/admin.js') ?: null,
-            true
-        );
+add_action('admin_enqueue_scripts', function ($hook) {
+    if ($hook !== 'tools_page_pt-simple-backup') {
+        return;
     }
+
+    $dir = plugin_dir_path(__FILE__);
+    $url = plugin_dir_url(__FILE__);
+
+    wp_enqueue_style('dashicons');
+    wp_enqueue_style(
+        'ptsb-admin',
+        $url . 'assets/admin.css',
+        [],
+        @filemtime($dir . 'assets/admin.css') ?: null
+    );
+
+    wp_enqueue_script(
+        'ptsb-admin',
+        $url . 'assets/admin.js',
+        [],
+        @filemtime($dir . 'assets/admin.js') ?: null,
+        true
+    );
 });
 
 // força no-cache nessa página do admin

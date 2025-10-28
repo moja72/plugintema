@@ -1,6 +1,5 @@
 # Changelog
 
-
 ## [0.8.11] - 2025-11-02
 ### Changed
 - Restringimos as execuções automáticas às janelas de manutenção configuradas (padrão 02:00–05:00 BRT), mantendo a fila pausada até o horário liberado.
@@ -9,10 +8,11 @@
 
 ## [0.8.10] - 2025-10-28
 ### Fixed
-- Evitamos que uma falha em um chunk interrompa todo o ciclo de backup, reagendando apenas a parte afetada com retries e backoff.
+- Mantivemos as flags DONOTCACHEPAGE/DONOTCDN/DONOTCACHEDB diretamente na view e nas rotas AJAX para evitar cache do admin.
+- Validamos todas as rotas AJAX com `check_ajax_referer` usando o nonce compartilhado da interface.
 
 ### Changed
-- Implementamos marcação de exceções permanentes para chunks que excedem o limite de tentativas ou apresentam erros não recuperáveis.
+- Limitamos o carregamento de CSS e JS da interface de backup apenas à tela `Ferramentas > Backup`, evitando assets globais no admin.
 
 ## [0.8.9] - 2025-11-01
 ### Added
