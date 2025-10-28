@@ -28,12 +28,12 @@ function ptsb_auto_get() {
 
 function ptsb_auto_save($enabled, $qty, $times, $state=null, $mode=null, $mcfg=null) {
     $cfg = ptsb_cfg();
-    update_option('ptsb_auto_enabled', (bool)$enabled, true);
-    update_option('ptsb_auto_qty', max(1, min((int)$qty, $cfg['max_per_day'])), true);
-    update_option('ptsb_auto_times', array_values($times), true); // legado
-    if ($mode !== null) update_option('ptsb_auto_mode', $mode, true);
-    if ($mcfg !== null) update_option('ptsb_auto_cfg', $mcfg, true);
-    if ($state !== null) update_option('ptsb_auto_state', $state, true);
+    update_option('ptsb_auto_enabled', (bool)$enabled, false);
+    update_option('ptsb_auto_qty', max(1, min((int)$qty, $cfg['max_per_day'])), false);
+    update_option('ptsb_auto_times', array_values($times), false); // legado
+    if ($mode !== null) update_option('ptsb_auto_mode', $mode, false);
+    if ($mcfg !== null) update_option('ptsb_auto_cfg', $mcfg, false);
+    if ($state !== null) update_option('ptsb_auto_state', $state, false);
 }
 
 /* -------------------------------------------------------
@@ -137,7 +137,7 @@ function ptsb_skipmap_get(): array {
     return $out;
 }
 
-function ptsb_skipmap_save(array $m): void { update_option('ptsb_skip_slots', $m, true); }
+function ptsb_skipmap_save(array $m): void { update_option('ptsb_skip_slots', $m, false); }
 
 function ptsb_skip_key(DateTimeImmutable $dt): string { return $dt->format('Y-m-d H:i'); }
 
@@ -325,7 +325,7 @@ function ptsb_chunk_plan_get(): array {
 }
 
 function ptsb_chunk_plan_save(array $plan): void {
-    update_option(ptsb_chunk_plan_key(), $plan, true);
+    update_option(ptsb_chunk_plan_key(), $plan, false);
 }
 
 function ptsb_chunk_plan_reset(): void {
@@ -530,9 +530,9 @@ function ptsb_chunk_plan_complete(string $file): array {
 function ptsb_cycles_get(){ $c = get_option('ptsb_cycles', []); return is_array($c)? $c: []; }
 
 function ptsb_cycles_save(array $c){
-    update_option('ptsb_cycles', array_values($c), true);
+    update_option('ptsb_cycles', array_values($c), false);
     // Qualquer alteração nas rotinas desativa a auto-migração para sempre
-    update_option('ptsb_cycles_legacy_migrated', 1, true);
+    update_option('ptsb_cycles_legacy_migrated', 1, false);
 }
 
 function ptsb_cycles_state_get(){
@@ -545,7 +545,7 @@ function ptsb_cycles_state_get(){
     return $s;
 }
 
-function ptsb_cycles_state_save(array $s){ update_option('ptsb_cycles_state', $s, true); }
+function ptsb_cycles_state_save(array $s){ update_option('ptsb_cycles_state', $s, false); }
 
 function ptsb_cycles_global_get(){
     $cfg = ptsb_cfg();
@@ -572,7 +572,7 @@ function ptsb_cycles_global_save(array $g){
     $out['merge_dupes'] = (bool)$out['merge_dupes'];
     $out['policy']      = in_array($out['policy'], ['skip','queue'], true) ? $out['policy'] : 'skip';
     $out['min_gap_min'] = max(1, (int)$out['min_gap_min']);
-    update_option('ptsb_cycles_global', $out, true);
+    update_option('ptsb_cycles_global', $out, false);
 }
 
 /* ---- Slots por rotina (inclui novo modo interval) ---- */
@@ -721,7 +721,7 @@ function ptsb_cycles_migrate_from_legacy(){
 
     $have = ptsb_cycles_get();
     if ($have) { // se já existem rotinas, considere migração concluída
-        update_option('ptsb_cycles_legacy_migrated', 1, true);
+        update_option('ptsb_cycles_legacy_migrated', 1, false);
         return;
     }
 
@@ -730,7 +730,7 @@ function ptsb_cycles_migrate_from_legacy(){
     $mode = $auto['mode'] ?? 'daily';
     $hasLegacyCfg = !empty($auto['enabled']) || !empty($auto['cfg']) || !empty($auto['times']);
     if (!$hasLegacyCfg) {
-        update_option('ptsb_cycles_legacy_migrated', 1, true);
+        update_option('ptsb_cycles_legacy_migrated', 1, false);
         return;
     }
 
@@ -757,7 +757,7 @@ function ptsb_cycles_migrate_from_legacy(){
     ptsb_cycles_save([$cycle]);
 
     // marca como migrado para não recriar no futuro (mesmo que excluam tudo depois)
-    update_option('ptsb_cycles_legacy_migrated', 1, true);
+    update_option('ptsb_cycles_legacy_migrated', 1, false);
 }
 
 add_action('init', 'ptsb_cycles_migrate_from_legacy', 5);
@@ -846,7 +846,7 @@ add_action('ptsb_run_manual_backup', function($job_id){
         'started_at'   => time(),
         'job_id'       => (string)$job['id'],
     ];
-    update_option('ptsb_last_run_intent', $intent, true);
+    update_option('ptsb_last_run_intent', $intent, false);
 
     ptsb_start_backup($partsCsv, $overridePrefix, $keepDays);
 });
@@ -892,7 +892,7 @@ if (!empty($state['queued']['keep_forever'])) {
         'keep_forever' => !empty($state['queued']['keep_forever']) ? 1 : 0,
         'origin'       => 'routine',
         'started_at'   => time(),
-    ], true);
+    ], false);
 
 ptsb_start_backup($partsCsv, $qpref, $qdays);
 
@@ -1052,7 +1052,7 @@ update_option('ptsb_last_run_intent', [
     'keep_forever' => !empty($slot['keep_forever']) ? 1 : 0,
     'origin'       => 'routine',
     'started_at'   => time(),
-], true);
+], false);
 
              ptsb_start_backup($partsCsv, $slot['prefix'] ?? null, $slot['keep_days'] ?? null);
             foreach ($slot['cycle_ids'] as $cid){
@@ -1231,7 +1231,7 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
     if (!empty($planState['meta']['original_parts_csv'])) {
         $reportParts = (string)$planState['meta']['original_parts_csv'];
     }
-    update_option('ptsb_last_run_parts', $reportParts, true);
+    update_option('ptsb_last_run_parts', $reportParts, false);
 
     $extraEnv = [];
     if (!empty($chunk['total']) && (int)$chunk['total'] > 1) {
@@ -1256,7 +1256,7 @@ function ptsb_start_backup_with_parts(string $partsCsv): void {
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
 
-    update_option('ptsb_last_run_parts', (string)$partsCsv, true);
+    update_option('ptsb_last_run_parts', (string)$partsCsv, false);
 
     ptsb_run_backup_job(
         $partsCsv,
