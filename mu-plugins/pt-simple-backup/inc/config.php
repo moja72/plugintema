@@ -301,6 +301,7 @@ function ptsb_remote_cache_flush(): void {
     delete_transient('ptsb_totals_v1');
     delete_transient('ptsb_remote_files_v1');
     delete_transient('ptsb_keep_map_v1');
+    delete_transient('ptsb_drive_info_v1');
 }
 
 function ptsb_tail_cache_flush(string $path): void {

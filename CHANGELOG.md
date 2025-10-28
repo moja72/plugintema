@@ -2,6 +2,8 @@
 
 ## [0.8.15] - 2025-10-28
 ### Changed
+- Adicionamos cache transitório para quota e e-mail do Drive com expiração configurável e limpeza manual via "Forçar atualizar".
+- Passamos a invalidar o cache quando o CLI falha, registrando log e exibindo placeholders na interface até a nova leitura.
 - Tornamos configurável o nível de compressão dos arquivos do backup, passando a utilizar `-6` por padrão para equilibrar desempenho e tamanho final.
 - Ajustamos os logs do script para indicar o nível aplicado durante a compressão com `pigz` ou `gzip`.
 - Carregamos o mapa de arquivos com marca `.keep` sob demanda na rotina de notificação, evitando chamadas remotas desnecessárias e mantendo a criação do sidecar para backups "Sempre manter".

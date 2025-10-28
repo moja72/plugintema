@@ -54,40 +54,109 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge = true): b
  * Drive: quota e e-mail (best effort)
  * -----------------------------------------------------*/
 
-function ptsb_drive_info() {
+function ptsb_drive_info(bool $force_refresh = false): array {
     $cfg  = ptsb_cfg();
-    $info = ['email' => '', 'used' => null, 'total' => null];
+    $info = ['email' => '', 'used' => null, 'total' => null, 'fetched_at' => null];
     if (!ptsb_can_shell()) return $info;
+
+    $cache_key = 'ptsb_drive_info_v1';
+    $ttl       = (int) apply_filters('ptsb_drive_info_ttl', 10 * MINUTE_IN_SECONDS);
+    if ($ttl < 60) {
+        $ttl = 60;
+    }
+
+    if ($force_refresh) {
+        delete_transient($cache_key);
+    } else {
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            return array_merge($info, $cached);
+        }
+    }
 
     $remote   = $cfg['remote'];
     $rem_name = rtrim($remote, ':');
 
+    $aboutFailed = false;
+    $userinfoFailed = false;
+
     $aboutJson = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' --json 2>/dev/null');
-    $j = json_decode((string)$aboutJson, true);
-    if (is_array($j)) {
-        if (isset($j['used']))  $info['used']  = (int)$j['used'];
-        if (isset($j['total'])) $info['total'] = (int)$j['total'];
+    if ($aboutJson === null) {
+        $aboutFailed = true;
     } else {
-        $txt = (string)ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null');
-        if (preg_match('/Used:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m))  $info['used']  = ptsb_size_to_bytes($m[1], $m[2]);
-        if (preg_match('/Total:\s*([\d.,]+)\s*([KMGT]i?B)/i', $txt, $m)) $info['total'] = ptsb_size_to_bytes($m[1], $m[2]);
+        $j = json_decode((string)$aboutJson, true);
+        if (is_array($j)) {
+            if (isset($j['used']))  $info['used']  = (int)$j['used'];
+            if (isset($j['total'])) $info['total'] = (int)$j['total'];
+        } else {
+            $aboutFailed = true;
+        }
     }
 
-    $u = (string)ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null');
-    if (trim($u) === '') {
-        $u = (string)ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null');
+    if ($aboutFailed) {
+        $txt = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null');
+        if ($txt === null) {
+            $aboutFailed = true;
+        } else {
+            $aboutFailed = false;
+            if (preg_match('/Used:\s*([\d.,]+)\s*([KMGT]i?B)/i', (string)$txt, $m)) {
+                $info['used'] = ptsb_size_to_bytes($m[1], $m[2]);
+            }
+            if (preg_match('/Total:\s*([\d.,]+)\s*([KMGT]i?B)/i', (string)$txt, $m)) {
+                $info['total'] = ptsb_size_to_bytes($m[1], $m[2]);
+            }
+        }
     }
-    if ($u !== '') {
-        $ju = json_decode($u, true);
+
+    $u = ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null');
+    if ($u === null) {
+        $userinfoFailed = true;
+    }
+
+    if (trim((string)$u) === '') {
+        $u = ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null');
+        if ($u === null) {
+            $userinfoFailed = true;
+        } else {
+            $userinfoFailed = false;
+        }
+    } else {
+        $userinfoFailed = false;
+    }
+
+    if ($u !== null && $u !== '') {
+        $ju = json_decode((string)$u, true);
         if (is_array($ju)) {
             if (!empty($ju['email']))                     $info['email'] = $ju['email'];
             elseif (!empty($ju['user']['email']))         $info['email'] = $ju['user']['email'];
             elseif (!empty($ju['user']['emailAddress']))  $info['email'] = $ju['user']['emailAddress'];
         } else {
-            if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $u, $m)) $info['email'] = $m[0];
+            if (preg_match('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', (string)$u, $m)) $info['email'] = $m[0];
         }
     }
+
+    $failures = [];
+    if ($aboutFailed) {
+        $failures[] = 'about';
+    }
+    if ($userinfoFailed) {
+        $failures[] = 'userinfo';
+    }
+
+    if (!empty($failures)) {
+        delete_transient($cache_key);
+        ptsb_log(sprintf('[drive-info] Falha ao executar rclone (%s) em %s.', implode(', ', $failures), $remote));
+        return $info;
+    }
+
+    $info['fetched_at'] = time();
+    set_transient($cache_key, $info, $ttl);
+
     return $info;
+}
+
+function ptsb_drive_info_clear_cache(): void {
+    delete_transient('ptsb_drive_info_v1');
 }
 
 /* -------------------------------------------------------
