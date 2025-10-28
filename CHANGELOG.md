@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.5] - 2025-10-28
+### Added
+- Exportadas variáveis de ambiente padrão com parâmetros de delta (--max-age, --update e template ano/mês) para que os scripts shell usem cópias incrementais e filtros consistentes.
+
+### Changed
+- Ajustados os comandos globais do rclone para limitar transfers/checkers, reforçar políticas de retry/backoff e repassar essas opções via `RCLONE_FLAGS`.
+- Tornado o uso de `--fast-list` opcional, controlado por configuração, e aplicado o mesmo comportamento às ações de renomear/apagar arquivos no Drive.
+
 ## [0.8.4] - 2025-10-28
 ### Added
 - Implemented queue-based chunking for backups, criando jobs menores sequenciais para reduzir picos de recursos.

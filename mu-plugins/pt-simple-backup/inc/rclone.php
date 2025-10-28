@@ -129,7 +129,10 @@ function ptsb_list_remote_files(bool $force_refresh = false): array {
 
     $cmd = 'lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "tsp" --separator ";" --time-format RFC3339 '
-         . ' --include ' . escapeshellarg('*.tar.gz') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz');
+    if (ptsb_rclone_fast_list_enabled()) {
+        $cmd .= ' --fast-list';
+    }
     $out = ptsb_rclone_exec($cmd);
     $rows = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $ln) {
@@ -155,7 +158,10 @@ function ptsb_keep_map(bool $force_refresh = false): array {
 
     $cmd = 'lsf ' . escapeshellarg($cfg['remote'])
          . ' --files-only --format "p" --separator ";" '
-         . ' --include ' . escapeshellarg('*.tar.gz.keep') . ' --fast-list';
+         . ' --include ' . escapeshellarg('*.tar.gz.keep');
+    if (ptsb_rclone_fast_list_enabled()) {
+        $cmd .= ' --fast-list';
+    }
     $out = ptsb_rclone_exec($cmd);
     $map = [];
     foreach (array_filter(array_map('trim', explode("\n", (string)$out))) as $p) {
