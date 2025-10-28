@@ -801,15 +801,6 @@ return $g;
 
 }
 
-function ptsb_cycles_global_save(array $g){
-    $def = ptsb_cycles_global_get();
-    $out = array_merge($def, $g);
-    $out['merge_dupes'] = (bool)$out['merge_dupes'];
-    $out['policy']      = in_array($out['policy'], ['skip','queue'], true) ? $out['policy'] : 'skip';
-    $out['min_gap_min'] = max(1, (int)$out['min_gap_min']);
-    update_option('ptsb_cycles_global', $out, false);
-}
-
 /* ---- Slots por rotina (inclui novo modo interval) ---- */
 
 function ptsb_cycle_today_slots(array $cycle, DateTimeImmutable $refDay){
@@ -1555,22 +1546,6 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
             ptsb_chunk_plan_reset();
         }
     }
-}
-
-/** Inicia backup com PARTS customizadas (bypass do ptsb_start_backup padrão) */
-
-function ptsb_start_backup_with_parts(string $partsCsv): void {
-    $cfg = ptsb_cfg();
-    $set = ptsb_settings();
-
-    update_option('ptsb_last_run_parts', (string)$partsCsv, false);
-
-    ptsb_run_backup_job(
-        $partsCsv,
-        (string)$cfg['prefix'],
-        (int)$set['keep_days'],
-        false
-    );
 }
 
 // checar notificação no admin e também no cron do plugin

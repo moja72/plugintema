@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.12] - 2025-10-28
+### Removed
+- Eliminamos helpers e utilitários não utilizados para simplificar a base de código.
+
 ## [0.8.11] - 2025-11-02
 ### Changed
 - Restringimos as execuções automáticas às janelas de manutenção configuradas (padrão 02:00–05:00 BRT), mantendo a fila pausada até o horário liberado.
