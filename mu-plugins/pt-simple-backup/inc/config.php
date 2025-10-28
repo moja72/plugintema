@@ -33,6 +33,7 @@ function ptsb_cfg(bool $refresh = false) {
         'queue_timeout'  => 5400,              // 90min
         'log_max_mb'     => 3,                 // tamanho máx. do log
         'log_keep'       => 5,                 // quantos arquivos rotacionados manter
+        'rclone_fast_list' => true,            // habilita --fast-list nas operações internas
     ];
 
     /**
@@ -66,6 +67,83 @@ function ptsb_get_nonce(): string {
 
 function ptsb_shell_env_prefix(): string {
     return '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
+}
+
+function ptsb_rclone_fast_list_enabled(): bool {
+    $cfg = ptsb_cfg();
+    $enabled = !empty($cfg['rclone_fast_list']);
+    return (bool) apply_filters('ptsb_rclone_fast_list_enabled', $enabled);
+}
+
+function ptsb_rclone_fast_list_flag(): string {
+    return ptsb_rclone_fast_list_enabled() ? ' --fast-list' : '';
+}
+
+function ptsb_rclone_uploads_filter_rules(): string {
+    $months = (int) apply_filters('ptsb_rclone_uploads_filter_months', 2);
+    $months = max(1, min($months, 12));
+
+    try {
+        $now = ptsb_now_brt();
+    } catch (Throwable $e) {
+        $now = new DateTimeImmutable('now');
+    }
+
+    $rules = ['+ /wp-content/uploads/'];
+    $seen  = [];
+    $dt    = $now->setDate((int) $now->format('Y'), (int) $now->format('m'), 1);
+
+    for ($i = 0; $i < $months; $i++) {
+        $key = $dt->format('Y-m');
+        if (!isset($seen[$key])) {
+            $seen[$key] = true;
+            $year  = $dt->format('Y');
+            $month = $dt->format('m');
+            $rules[] = '+ /wp-content/uploads/' . $year . '/';
+            $rules[] = '+ /wp-content/uploads/' . $year . '/' . $month . '/';
+            $rules[] = '+ /wp-content/uploads/' . $year . '/' . $month . '/**';
+        }
+        $dt = $dt->sub(new DateInterval('P1M'));
+    }
+
+    $rules[] = '- /wp-content/uploads/**';
+    $rules[] = '+ /**';
+
+    $rules = array_values(array_unique($rules));
+    $rules = apply_filters('ptsb_rclone_uploads_filter_rules', $rules);
+
+    return implode("\n", array_filter($rules, 'strlen'));
+}
+
+function ptsb_rclone_backup_env(): array {
+    $defaults = [
+        'RCLONE_TRANSFERS'        => '4',
+        'RCLONE_CHECKERS'         => '6',
+        'RCLONE_RETRIES'          => '5',
+        'RCLONE_LOW_LEVEL_RETRIES'=> '10',
+        'RCLONE_RETRY_BACKOFF'    => '5s',
+        'RCLONE_UPDATE'           => 'true',
+    ];
+
+    $maxAgeHours = (int) apply_filters('ptsb_rclone_max_age_hours', 72);
+    if ($maxAgeHours > 0) {
+        $defaults['RCLONE_MAX_AGE'] = $maxAgeHours . 'h';
+    }
+
+    if (!ptsb_rclone_fast_list_enabled()) {
+        $defaults['RCLONE_FAST_LIST'] = 'false';
+    }
+
+    $filterRules = ptsb_rclone_uploads_filter_rules();
+    if ($filterRules !== '') {
+        $defaults['RCLONE_FILTER'] = $filterRules;
+    }
+
+    $env = apply_filters('ptsb_rclone_backup_env', $defaults);
+
+    return array_filter($env, static function ($value) {
+        return $value !== null && $value !== '';
+    });
 }
 
 function ptsb_rclone_command(string $command): string {
