@@ -1,6 +1,12 @@
 # Changelog
 
 
+## [0.8.11] - 2025-11-02
+### Changed
+- Restringimos as execuções automáticas às janelas de manutenção configuradas (padrão 02:00–05:00 BRT), mantendo a fila pausada até o horário liberado.
+- Ajustamos o disparo do script para aplicar prioridades configuráveis via nice/ionice e, quando disponível, limitar CPU com `cpulimit`.
+
+
 ## [0.8.10] - 2025-10-28
 ### Fixed
 - Evitamos que uma falha em um chunk interrompa todo o ciclo de backup, reagendando apenas a parte afetada com retries e backoff.

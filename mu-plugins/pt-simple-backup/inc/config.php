@@ -39,6 +39,16 @@ function ptsb_cfg(bool $refresh = false) {
         'min_gap_min'    => 10,
         'miss_window'    => 15,
         'queue_timeout'  => 5400,              // 90min
+        'maintenance_window' => [              // janela diária permitida para execuções automáticas
+            'enabled' => true,
+            'start'   => '02:00',
+            'end'     => '05:00',
+        ],
+        'process_limits' => [                  // limites de prioridade/processo
+            'nice'          => 10,
+            'ionice'        => ['class' => 2, 'priority' => 7],
+            'cpu_limit_pct' => 60,
+        ],
         'log_max_mb'     => 3,                 // tamanho máx. do log
         'log_keep'       => 5,                 // quantos arquivos rotacionados manter
         'rclone_fast_list' => true,            // habilita --fast-list nas operações internas
@@ -152,6 +162,102 @@ function ptsb_rclone_backup_env(): array {
     return array_filter($env, static function ($value) {
         return $value !== null && $value !== '';
     });
+}
+
+function ptsb_maintenance_window_config(): array {
+    $cfg  = ptsb_cfg();
+    $base = isset($cfg['maintenance_window']) && is_array($cfg['maintenance_window'])
+        ? $cfg['maintenance_window']
+        : [];
+
+    $merged  = array_merge(['enabled' => true, 'start' => '02:00', 'end' => '05:00'], $base);
+    $enabled = !empty($merged['enabled']);
+
+    $normalize = static function ($value, $fallback) {
+        $value = is_string($value) ? trim($value) : '';
+        if (preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', $value)) {
+            [$h, $m] = array_map('intval', explode(':', $value, 2));
+            return sprintf('%02d:%02d', $h, $m);
+        }
+        return $fallback;
+    };
+
+    $start = $normalize($merged['start'] ?? '02:00', '02:00');
+    $end   = $normalize($merged['end']   ?? '05:00', '05:00');
+
+    $window = [
+        'enabled' => $enabled,
+        'start'   => $start,
+        'end'     => $end,
+    ];
+
+    return apply_filters('ptsb_maintenance_window_config', $window);
+}
+
+function ptsb_process_limits(): array {
+    $cfg  = ptsb_cfg();
+    $base = isset($cfg['process_limits']) && is_array($cfg['process_limits'])
+        ? $cfg['process_limits']
+        : [];
+
+    $merged = array_merge([
+        'nice'          => 10,
+        'ionice'        => ['class' => 2, 'priority' => 7],
+        'cpu_limit_pct' => 60,
+    ], $base);
+
+    $niceRaw = $merged['nice'];
+    $nice    = null;
+    if ($niceRaw !== false && $niceRaw !== null) {
+        $nice = max(-20, min(19, (int) $niceRaw));
+    }
+
+    $ioniceRaw = $merged['ionice'] ?? [];
+    $ionice    = null;
+    if ($ioniceRaw !== false && $ioniceRaw !== null) {
+        $ioniceArr = is_array($ioniceRaw) ? $ioniceRaw : [];
+        $class     = isset($ioniceArr['class']) ? (int) $ioniceArr['class'] : 2;
+        if (!in_array($class, [1, 2, 3], true)) {
+            $class = 2;
+        }
+        $priority = isset($ioniceArr['priority']) ? (int) $ioniceArr['priority'] : 7;
+        $priority = max(0, min(7, $priority));
+        $ionice   = ['class' => $class, 'priority' => $priority];
+    }
+
+    $cpuLimit = isset($merged['cpu_limit_pct']) ? (int) $merged['cpu_limit_pct'] : 0;
+    $cpuLimit = max(0, min(100, $cpuLimit));
+
+    $limits = [
+        'nice'          => $nice,
+        'ionice'        => $ionice,
+        'cpu_limit_pct' => $cpuLimit,
+    ];
+
+    return apply_filters('ptsb_process_limits', $limits);
+}
+
+function ptsb_shell_command_exists(string $command): bool {
+    static $cache = [];
+
+    $command = trim($command);
+    if ($command === '') {
+        return false;
+    }
+
+    if (array_key_exists($command, $cache)) {
+        return (bool) $cache[$command];
+    }
+
+    if (!ptsb_can_shell()) {
+        $cache[$command] = false;
+        return false;
+    }
+
+    $result = shell_exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null');
+    $cache[$command] = is_string($result) && trim($result) !== '';
+
+    return (bool) $cache[$command];
 }
 
 function ptsb_rclone_command(string $command): string {

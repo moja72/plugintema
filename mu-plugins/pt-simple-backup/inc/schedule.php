@@ -60,6 +60,37 @@ function ptsb_time_to_min($t){ [$h,$m]=ptsb_parse_time_hm($t); return $h*60+$m; 
 
 function ptsb_min_to_time($m){ $m=max(0,min(1439,(int)round($m))); return sprintf('%02d:%02d', intdiv($m,60), $m%60); }
 
+function ptsb_is_within_maintenance_window(?DateTimeImmutable $ref = null): bool {
+    $window = ptsb_maintenance_window_config();
+    if (empty($window['enabled'])) {
+        return true;
+    }
+
+    $ref = $ref ?: ptsb_now_brt();
+
+    [$startH, $startM] = array_map('intval', explode(':', (string) $window['start']));
+    [$endH, $endM]     = array_map('intval', explode(':', (string) $window['end']));
+
+    $startMin = ($startH * 60) + $startM;
+    $endMin   = ($endH * 60) + $endM;
+    $current  = ((int) $ref->format('H') * 60) + (int) $ref->format('i');
+
+    if ($startMin === $endMin) {
+        return true;
+    }
+
+    if ($startMin < $endMin) {
+        return $current >= $startMin && $current < $endMin;
+    }
+
+    return $current >= $startMin || $current < $endMin;
+}
+
+function ptsb_maintenance_window_label(): string {
+    $window = ptsb_maintenance_window_config();
+    return sprintf('%s-%s', $window['start'], $window['end']);
+}
+
 /** gera X horários igualmente espaçados na janela [ini..fim] inclusive */
 
 function ptsb_evenly_distribute($x, $ini='00:00', $fim='23:59'){
@@ -743,9 +774,9 @@ function ptsb_cycles_state_get(){
     $s = get_option('ptsb_cycles_state', []);
     if (!is_array($s)) $s = [];
     // 1 única fila global simplificada
-    $s += ['by_cycle'=>[], 'queued'=>['cycle_id'=>'','time'=>'','letters'=>[],'cycle_ids'=>[],'prefix'=>'','keep_days'=>null,'keep_forever'=>0,'queued_at'=>0]];
+    $s += ['by_cycle'=>[], 'queued'=>['cycle_id'=>'','time'=>'','letters'=>[],'cycle_ids'=>[],'prefix'=>'','keep_days'=>null,'keep_forever'=>0,'queued_at'=>0,'reason'=>'']];
     if (!is_array($s['by_cycle'])) $s['by_cycle']=[];
-    if (!is_array($s['queued'])) $s['queued']=['cycle_id'=>'','time'=>'','letters'=>[],'queued_at'=>0];
+    if (!is_array($s['queued'])) $s['queued']=['cycle_id'=>'','time'=>'','letters'=>[],'queued_at'=>0,'reason'=>''];
     return $s;
 }
 
@@ -1077,6 +1108,26 @@ if (!$cycles) {
     ptsb_skipmap_gc();
     $skipmap = ptsb_skipmap_get();
 
+    if (!ptsb_is_within_maintenance_window($now)) {
+        if (!empty($state['queued']['time'])) {
+            $reason = (string) ($state['queued']['reason'] ?? '');
+            if ($reason !== 'window') {
+                $state['queued']['reason']    = 'window';
+                $state['queued']['queued_at'] = time();
+                ptsb_cycles_state_save($state);
+            }
+        }
+
+        $label = ptsb_maintenance_window_label();
+        ptsb_log_throttle('maintenance_window_block', 'Execuções automáticas pausadas fora da janela de manutenção ' . $label . ' (BRT).', 900);
+        return;
+    }
+
+    if (!empty($state['queued']['time']) && ($state['queued']['reason'] ?? '') === 'window') {
+        $state['queued']['reason'] = '';
+        ptsb_cycles_state_save($state);
+    }
+
     // Se tem fila pendente e não está rodando, executa-a
     if (!$running && !empty($state['queued']['time'])) {
         $letters = (array)$state['queued']['letters'];
@@ -1119,6 +1170,7 @@ $state['queued'] = [
   'keep_days'    => null,
   'keep_forever' => 0,
   'queued_at'    => 0,
+  'reason'       => '',
 ];
 
         ptsb_cycles_state_save($state);
@@ -1224,6 +1276,7 @@ $cy_days     = (isset($raw_days) && !$cy_forever) ? max(1, (int)$raw_days) : nul
           'keep_days'    => $slot['keep_days'] ?? null,
           'keep_forever' => !empty($slot['keep_forever']) ? 1 : 0,
           'queued_at'    => time(),
+          'reason'       => 'running',
         ];
         ptsb_log('Execução adiada: outra em andamento; enfileirado '.$slot['time'].'.');
     } else {
@@ -1281,7 +1334,9 @@ update_option('ptsb_last_run_intent', [
     }
 
     // timeout da fila global
-    if (!empty($state['queued']['time']) && (time() - (int)$state['queued']['queued_at']) > (int)$cfg['queue_timeout']) {
+    if (!empty($state['queued']['time'])) {
+        $queuedReason = (string) ($state['queued']['reason'] ?? '');
+        if ($queuedReason !== 'window' && (time() - (int)$state['queued']['queued_at']) > (int)$cfg['queue_timeout']) {
     ptsb_log('Fila global descartada por timeout.');
     $state['queued'] = [
       'cycle_id'     => '',
@@ -1292,9 +1347,11 @@ update_option('ptsb_last_run_intent', [
       'keep_days'    => null,
       'keep_forever' => 0,
       'queued_at'    => 0,
+      'reason'       => '',
     ];
     ptsb_cycles_state_save($state);
-}
+        }
+    }
 
 });
 
@@ -1350,8 +1407,52 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
         ptsb_log('Backup disparado: '.$partsCsv);
     }
 
-    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . escapeshellarg($cfg['script_backup'])
-         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
+    $limits    = ptsb_process_limits();
+    $coreCmd   = '/usr/bin/nohup /usr/bin/env ' . $env . escapeshellarg($cfg['script_backup']);
+    $fullChain = $coreCmd;
+
+    $ioniceCmd = null;
+    if (is_array($limits['ionice'])) {
+        $ioniceInfo = $limits['ionice'];
+        $class      = (int) ($ioniceInfo['class'] ?? 2);
+        $priority   = (int) ($ioniceInfo['priority'] ?? 7);
+        if (ptsb_shell_command_exists('ionice')) {
+            $ioniceCmd = 'ionice -c' . $class;
+            if (in_array($class, [1, 2], true)) {
+                $ioniceCmd .= ' -n' . $priority;
+            }
+        } else {
+            ptsb_log_throttle('ionice_missing', 'ionice indisponível; priorização de I/O não aplicada.', 3600);
+        }
+    }
+
+    $niceCmd = null;
+    if ($limits['nice'] !== null) {
+        $niceCmd = 'nice -n ' . (int) $limits['nice'];
+    }
+
+    $cpuLimitCmd = null;
+    if (!empty($limits['cpu_limit_pct'])) {
+        if (ptsb_shell_command_exists('cpulimit')) {
+            $cpuLimitCmd = 'cpulimit -z -l ' . (int) $limits['cpu_limit_pct'];
+        } else {
+            ptsb_log_throttle('cpulimit_missing', 'cpulimit indisponível; limite de CPU ignorado.', 3600);
+        }
+    }
+
+    if ($ioniceCmd) {
+        $fullChain = $ioniceCmd . ' ' . $fullChain;
+    }
+
+    if ($niceCmd) {
+        $fullChain = $niceCmd . ' ' . $fullChain;
+    }
+
+    if ($cpuLimitCmd) {
+        $fullChain = $cpuLimitCmd . ' -- ' . $fullChain;
+    }
+
+    $cmd = $fullChain . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
 
     $result = shell_exec($cmd);
     $pid    = 0;

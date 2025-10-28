@@ -8,6 +8,21 @@ function ptsb_log($msg) {
     @file_put_contents($cfg['log'], $line, FILE_APPEND);
 }
 
+function ptsb_log_throttle(string $key, string $message, int $ttl = 600): void {
+    $ttl    = max(60, $ttl);
+    $now    = time();
+    $cache  = 'ptsb_log_once_' . md5($key);
+    $stored = get_transient($cache);
+    $expiresAt = is_numeric($stored) ? (int) $stored : 0;
+
+    if ($expiresAt > $now) {
+        return;
+    }
+
+    ptsb_log($message);
+    set_transient($cache, $now + $ttl, $ttl);
+}
+
 /**
  * Rotaciona o log quando ultrapassa o limite configurado.
  * - Se existir lock: faz copytruncate (copia para .1 e zera o arquivo atual).
