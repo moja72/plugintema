@@ -207,10 +207,10 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
   $total = count($rows);
 
   // valor padrão salvo (opcional) + query string
-$per_default = (int) get_option('ptsb_list_per_page', 25);
-$per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_default : 25);
+  $per_default = (int) get_option('ptsb_list_per_page', 20);
+  $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_default : 20);
 
-  $per = max(1, min($per, 500));              // limite de sanidade
+  $per = max(1, min($per, 20));               // limite de sanidade
   if (isset($_GET['per'])) update_option('ptsb_list_per_page', $per, false); // lembra preferência
 
   $paged = max(1, (int)($_GET['paged'] ?? 1));
@@ -248,7 +248,7 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
     <input type="hidden" name="tab"  value="backup">
     <input type="hidden" name="paged" value="1">
     <span>Exibindo <?php echo number_format_i18n($shown); ?> de <?php echo number_format_i18n($total); ?> arquivos — página <?php echo number_format_i18n($paged); ?> de <?php echo number_format_i18n($total_pages); ?> — mostrar</span>
-    <input type="number" name="per" min="1" max="500" value="<?php echo (int)$per; ?>" style="width:auto">
+    <input type="number" name="per" min="1" max="20" value="<?php echo (int)$per; ?>" style="width:auto">
     <span>por página</span>
   </form>
 </div>
@@ -274,33 +274,12 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
 <?php else:
   foreach ($rows_page as $r):
 
-    $time = $r['time']; $file = $r['file']; $size = (int)($r['size'] ?? 0);
+    $time = $r['time'];
+    $file = $r['file'];
+    $size = (int)($r['size'] ?? 0);
     $is_kept = !empty($keepers[$file]);
-    $manifest = ptsb_manifest_read($file);
-    $letters = [];
-    if (!empty($manifest['parts'])) $letters = ptsb_parts_to_letters($manifest['parts']);
-    if (!$letters) $letters = ['D','P','T','W','S','M','O'];
-    $keepDays  = ptsb_manifest_keep_days($manifest, (int)$set['keep_days']);
-    $rotina_label = ptsb_run_kind_label($manifest, $file);
-
-    // NOVO: calcular se está vencido (não-keep e X/Y >= Y/Y)
-    $ri = null; $is_expired = false;
-    if (!$is_kept && is_int($keepDays) && $keepDays > 0) {
-        $ri = ptsb_retention_calc($time, $keepDays);
-        $is_expired = ($ri['x'] >= $ri['y']);
-    }
-    
 ?>
-
-<?php
-  $time = $r['time'];
-  $file = $r['file'];
-  $size = (int)($r['size'] ?? 0);
-  $is_kept = !empty($keepers[$file]); // mantém só o mapa .keep (1 listagem rclone)
-  $row_classes = [];
-  if ($is_expired) $row_classes[] = 'ptsb-expired';
-?>
-<tr<?php echo $row_classes ? ' class="'.esc_attr(implode(' ', $row_classes)).'"' : ''; ?>
+<tr
     data-file="<?php echo esc_attr($file); ?>"
     data-time="<?php echo esc_attr($time); ?>"
     data-kept="<?php echo $is_kept ? 1 : 0; ?>">
@@ -309,9 +288,6 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
 
   <td>
     <span class="ptsb-filename"><?php echo esc_html($file); ?></span>
-    <?php if ($is_expired): ?>
-      <span class="ptsb-tag vencido">vencido</span>
-    <?php endif; ?>
     <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>"
           class="ptsb-rename-form" style="display:inline">
       <?php wp_nonce_field('ptsb_nonce'); ?>
@@ -326,37 +302,15 @@ $per = isset($_GET['per']) ? (int) $_GET['per'] : ($per_default > 0 ? $per_defau
     </form>
   </td>
 
-  <td class="ptsb-col-rotina">
-    <?php if ($rotina_label !== ''): ?>
-      <span class="ptsb-rotina"><?php echo esc_html($rotina_label); ?></span>
-    <?php else: ?>
-      <span class="description">—</span>
-    <?php endif; ?>
-  </td>
+  <td class="ptsb-col-rotina"><span class="description">Carregando…</span></td>
 
   <td class="ptsb-col-letters" aria-label="Partes incluídas">
-    <?php foreach ($letters as $L): $meta = ptsb_letter_meta($L); ?>
-      <span class="ptsb-mini" title="<?php echo esc_attr($meta['label']); ?>">
-        <span class="dashicons <?php echo esc_attr($meta['class']); ?>"></span>
-      </span>
-    <?php endforeach; ?>
+    <span class="description">Carregando…</span>
   </td>
 
   <td><?php echo esc_html( ptsb_hsize($size) ); ?></td>
 
-  <td class="ptsb-col-ret">
-    <?php
-    if ($is_kept || $keepDays === 0) {
-        echo '<span class="ptsb-ret sempre" title="Sempre manter">sempre</span>';
-    } elseif (is_int($keepDays) && $keepDays > 0) {
-        $ri = $ri ?? ptsb_retention_calc($time, $keepDays);
-        echo '<span class="ptsb-ret" title="'.esc_attr('Dia '.$ri['x'].' de '.$ri['y']).'">'
-           .esc_html($ri['x'].'/'.$ri['y']).'</span>';
-    } else {
-        echo '<span class="description">—</span>';
-    }
-    ?>
-  </td>
+  <td class="ptsb-col-ret"><span class="description">Carregando…</span></td>
 
   <!-- AÇÕES (inalterado) -->
   <td class="ptsb-actions">
@@ -765,9 +719,9 @@ $nx    = $next1 ? esc_html($next1[0]['dt']->format('d/m/Y H:i')) : '(—)';
 
         // ====== CONTROLES ======
         // per/página (1..100), lembrando preferência
-        $per_default = (int) get_option('ptsb_next_per_page', 12);
-        $per_next = isset($_GET['per_next']) ? (int) $_GET['per_next'] : ($per_default > 0 ? $per_default : 12);
-        $per_next = max(1, min($per_next, 100));
+        $per_default = (int) get_option('ptsb_next_per_page', 20);
+        $per_next = isset($_GET['per_next']) ? (int) $_GET['per_next'] : ($per_default > 0 ? $per_default : 20);
+        $per_next = max(1, min($per_next, 20));
         if (isset($_GET['per_next'])) update_option('ptsb_next_per_page', $per_next, false);
 
         $page_next = max(1, (int)($_GET['page_next'] ?? 1));
@@ -871,7 +825,7 @@ $nx    = $next1 ? esc_html($next1[0]['dt']->format('d/m/Y H:i')) : '(—)';
               <?php if ($next_date): ?><input type="hidden" name="next_date" value="<?php echo esc_attr($next_date); ?>"><?php endif; ?>
               <input type="hidden" name="page_next" value="1"><!-- mudar per volta pra pág. 1 -->
               <span>Exibindo</span>
-              <input type="number" name="per_next" min="1" max="100" value="<?php echo (int)$per_next; ?>" style="width:auto">
+              <input type="number" name="per_next" min="1" max="20" value="<?php echo (int)$per_next; ?>" style="width:auto">
               <span>próximas execuções — página <?php echo (int)$page_next; ?></span>
             </form>
           </div>
@@ -970,9 +924,9 @@ $last_ok  = isset($_GET['last_ok'])  ? (int)!!$_GET['last_ok']  : 1; // 0 ou 1
 
 
  // >>> ADIÇÃO: parâmetros de paginação desta aba
-  $per_default_l = (int) get_option('ptsb_last_per_page', 12);
-  $per_last = isset($_GET['per_last']) ? (int) $_GET['per_last'] : ($per_default_l > 0 ? $per_default_l : 12);
-  $per_last = max(1, min($per_last, 500));
+  $per_default_l = (int) get_option('ptsb_last_per_page', 20);
+  $per_last = isset($_GET['per_last']) ? (int) $_GET['per_last'] : ($per_default_l > 0 ? $per_default_l : 20);
+  $per_last = max(1, min($per_last, 20));
   if (isset($_GET['per_last'])) update_option('ptsb_last_per_page', $per_last, false);
 
   $page_last = max(1, (int)($_GET['page_last'] ?? 1));
@@ -1071,7 +1025,7 @@ $script_data['urls']['lastPager'] = add_query_arg([
 
     <?php $shown_last = count($rows_last); ?>
     <span>Exibindo <?php echo esc_html( number_format_i18n($shown_last) ); ?> de <?php echo esc_html( number_format_i18n($total_last) ); ?> execuções — página <?php echo esc_html( number_format_i18n($page_last) ); ?> de <?php echo esc_html( number_format_i18n($total_pages_l) ); ?> — mostrar</span>
-    <input type="number" name="per_last" min="1" max="500"
+    <input type="number" name="per_last" min="1" max="20"
            value="<?php echo (int)$per_last; ?>" style="width:auto">
   </form>
 </div>
@@ -1109,7 +1063,6 @@ $script_data['urls']['lastPager'] = add_query_arg([
   }
     $tr_class = ($is_expired ? ' class="ptsb-expired"' : '');
 ?>
-<tr>
     <tr<?php echo $tr_class; ?>>
   <td><?php echo esc_html( ptsb_fmt_local_dt($time) ); ?></td>
   <td><?php echo esc_html($file); ?></td>

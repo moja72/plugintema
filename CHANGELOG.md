@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.7] - 2025-10-30
+### Changed
+- Implementado carregamento assíncrono dos detalhes dos backups com limite de 20 itens por requisição, evitando a decodificação imediata de manifests volumosos na interface.
+- Ajustadas paginações das abas de backups, próximas e últimas execuções para trabalharem com lotes de até 20 itens, reduzindo a carga inicial da página.
+
 ## [0.8.6] - 2025-10-29
 ### Changed
 - Empacotado script de backup assíncrono que utiliza `mysqldump --single-transaction --quick`, compressão via `pigz`/`gzip` e upload por etapas com `rclone`, evitando bloqueio da requisição do painel.

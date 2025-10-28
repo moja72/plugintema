@@ -89,47 +89,61 @@
     const files = collectFiles();
     if (!files.length || !ajaxUrl || !nonce) return;
 
-    const params = new URLSearchParams();
-    params.set('action', 'ptsb_details_batch');
-    params.set('nonce', nonce);
-    files.forEach(file => params.append('files[]', file));
+    const batches = [];
+    for (let i = 0; i < files.length; i += 20) {
+      batches.push(files.slice(i, i + 20));
+    }
 
-    fetch(ajaxUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString()
-    })
-      .then(resp => resp.json())
-      .then(res => {
-        if (!res || !res.success || !res.data) return;
-        const info = res.data;
-        files.forEach(file => {
-          const tr = document.querySelector('tr[data-file="' + CSS.escape(file) + '"]');
-          if (!tr) return;
-          const details = info[file] || {};
+    function loadBatch(batch) {
+      if (!batch.length) return Promise.resolve();
 
-          const routine = tr.querySelector('.ptsb-col-rotina');
-          if (routine) {
-            routine.textContent = details.routine_label || '—';
-          }
+      const params = new URLSearchParams();
+      params.set('action', 'ptsb_details_batch');
+      params.set('nonce', nonce);
+      batch.forEach(file => params.append('files[]', file));
 
-          const lettersCell = tr.querySelector('.ptsb-col-letters');
-          if (lettersCell) {
-            const letters = Array.isArray(details.parts_letters) && details.parts_letters.length
-              ? details.parts_letters
-              : defaultLetters;
-            lettersCell.innerHTML = letters.map(letterIcon).join('');
-          }
-
-          const keepDays = details.keep_days === null || details.keep_days === undefined
-            ? null
-            : parseInt(details.keep_days, 10);
-          renderRetentionCell(tr, Number.isNaN(keepDays) ? null : keepDays);
-        });
+      return fetch(ajaxUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
       })
-      .catch(() => {
-        /* silent */
-      });
+        .then(resp => resp.json())
+        .then(res => {
+          if (!res || !res.success || !res.data) return;
+          const info = res.data;
+          batch.forEach(file => {
+            const tr = document.querySelector('tr[data-file="' + CSS.escape(file) + '"]');
+            if (!tr) return;
+            const details = info[file] || {};
+
+            const routine = tr.querySelector('.ptsb-col-rotina');
+            if (routine) {
+              routine.textContent = details.routine_label || '—';
+            }
+
+            const lettersCell = tr.querySelector('.ptsb-col-letters');
+            if (lettersCell) {
+              const letters = Array.isArray(details.parts_letters) && details.parts_letters.length
+                ? details.parts_letters
+                : defaultLetters;
+              lettersCell.innerHTML = letters.map(letterIcon).join('');
+            }
+
+            const keepDays = details.keep_days === null || details.keep_days === undefined
+              ? null
+              : parseInt(details.keep_days, 10);
+            renderRetentionCell(tr, Number.isNaN(keepDays) ? null : keepDays);
+          });
+        })
+        .catch(() => {
+          /* silent */
+        });
+    }
+
+    let chain = Promise.resolve();
+    batches.forEach(batch => {
+      chain = chain.then(() => loadBatch(batch));
+    });
   }
 
   function initBackupPager() {

@@ -52,3 +52,47 @@ add_action('wp_ajax_ptsb_status', function () {
         'job'     => ptsb_manual_job_response_payload(),
     ]);
 });
+
+add_action('wp_ajax_ptsb_details_batch', function () {
+    nocache_headers();
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    if (!current_user_can('manage_options')) wp_send_json_error('forbidden', 403);
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+    if (!wp_verify_nonce($nonce, 'ptsb_nonce')) wp_send_json_error('bad nonce', 403);
+
+    $files = isset($_POST['files']) ? (array)$_POST['files'] : [];
+    $files = array_values(array_filter(array_map('sanitize_text_field', $files)));
+    if (!$files) {
+        wp_send_json_success([]);
+    }
+
+    $files = array_slice($files, 0, 20);
+    $settings = ptsb_settings();
+    $defaultKeep = isset($settings['keep_days']) ? (int)$settings['keep_days'] : null;
+
+    $response = [];
+    foreach ($files as $file) {
+        $manifest = ptsb_manifest_read($file);
+        if (!is_array($manifest)) {
+            $manifest = [];
+        }
+
+        $letters = [];
+        if (!empty($manifest['parts'])) {
+            $letters = ptsb_parts_to_letters($manifest['parts']);
+        }
+        if (!$letters) {
+            $letters = ['D', 'P', 'T', 'W', 'S', 'M', 'O'];
+        }
+
+        $keepDays = ptsb_manifest_keep_days($manifest, $defaultKeep);
+        $response[$file] = [
+            'parts_letters' => array_values($letters),
+            'keep_days'     => $keepDays === null ? null : (int) $keepDays,
+            'routine_label' => ptsb_run_kind_label($manifest, $file),
+        ];
+    }
+
+    wp_send_json_success($response);
+});
