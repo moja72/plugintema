@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.8] - 2025-10-31
+### Added
+- Script dedicado para acionar o `wp cron event run --due-now` via WP-CLI, permitindo agendamento pelo cron do sistema.
+- Orientação na aba de configurações sobre como configurar o cron externo utilizando o novo script.
+
 ## [0.8.7] - 2025-10-30
 ### Changed
 - Implementado carregamento assíncrono dos detalhes dos backups com limite de 20 itens por requisição, evitando a decodificação imediata de manifests volumosos na interface.
