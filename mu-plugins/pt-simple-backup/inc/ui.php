@@ -1,19 +1,6 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-/* ===================== CICLOS (rotinas) ===================== */
-
-/* UUID v4 simples p/ id de rotina */
-
-/* ===================== FIM DA PARTE 1 ===================== */
-// A PARTE 2 trará: UI da página (chips P,T,W,S,M,O acima do botão),
-// tabela com coluna “Backup” (letras acesas), AJAX de status e barra de progresso,
-// e o CSS/JS necessário para tudo funcionar.
-
-
-/*PARTE 2*/
-/** Meta de ícones por letra (Dashicons) */
-
 function ptsb_render_backup_page() {
     if (!current_user_can('manage_options')) return;
 
@@ -32,19 +19,29 @@ function ptsb_render_backup_page() {
     $rows    = ptsb_list_remote_files();
     $keepers = ptsb_keep_map();
     $auto    = ptsb_auto_get();
+    $default_letters = ['D','P','T','W','S','M','O'];
+    $default_letters_meta = [
+        'D' => ['text' => 'Banco de Dados',       'icon' => 'dashicons-database'],
+        'P' => ['text' => 'Plugins',              'icon' => 'dashicons-admin-plugins'],
+        'T' => ['text' => 'Temas',                'icon' => 'dashicons-admin-appearance'],
+        'W' => ['text' => 'Core',                 'icon' => 'dashicons-wordpress-alt'],
+        'S' => ['text' => 'Scripts',              'icon' => 'dashicons-editor-code'],
+        'M' => ['text' => 'Mídia',                'icon' => 'dashicons-admin-media'],
+        'O' => ['text' => 'Outros',               'icon' => 'dashicons-image-filter'],
+    ];
 
-    // === Abas (roteamento) ===
-$tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'backup';
-if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 'backup';
-
+    $tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'backup';
+    if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) {
+        $tab = 'backup';
+    }
 
     $h1 = [
-    'backup'    => 'Backups (Google Drive)',
-    'cycles'    => 'Rotinas de Backup',
-    'next'      => 'Próximas Execuções',
-    'last'      => 'Últimas Execuções',
-    'settings'  => 'Configurações',
-][$tab];
+        'backup'    => 'Backups (Google Drive)',
+        'cycles'    => 'Rotinas de Backup',
+        'next'      => 'Próximas Execuções',
+        'last'      => 'Últimas Execuções',
+        'settings'  => 'Configurações',
+    ][$tab];
 
     // Diagnóstico
     $diag = [];
@@ -66,35 +63,33 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
         'perPage' => [],
         'filters' => [],
         'defaults'=> [
-            'letters' => ['D','P','T','W','S','M','O'],
+            'letters' => $default_letters,
         ],
     ];
 
-    // Drive (resumo)
-  $drive = ptsb_drive_info();
+    $drive = ptsb_drive_info();
 
-// se vier ?force=1, zera caches relacionados ao Drive
-if (isset($_GET['force']) && (int)$_GET['force'] === 1) {
-    ptsb_remote_cache_flush();
-}
-$tot    = ptsb_backups_totals_cached();
-$bk_count       = (int)$tot['count'];
-$backups_total  = (int)$tot['bytes'];
+    if (isset($_GET['force']) && (int)$_GET['force'] === 1) {
+        ptsb_remote_cache_flush();
+    }
 
-$usedStr  = ($drive['used']  !== null) ? ptsb_hsize_compact($drive['used'])  : '?';
-$totalStr = ($drive['total'] !== null) ? ptsb_hsize_compact($drive['total']) : '?';
-$bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'itens') . ' / ' . ptsb_hsize_compact($backups_total);
+    $tot           = ptsb_backups_totals_cached();
+    $bk_count      = (int) $tot['count'];
+    $backups_total = (int) $tot['bytes'];
+
+    $usedStr  = ($drive['used']  !== null) ? ptsb_hsize_compact($drive['used'])  : '?';
+    $totalStr = ($drive['total'] !== null) ? ptsb_hsize_compact($drive['total']) : '?';
+    $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'itens') . ' / ' . ptsb_hsize_compact($backups_total);
 
 
-    // Navegação das abas
     $base = admin_url('tools.php?page=pt-simple-backup');
-   $tabs = [
-    'backup'    => 'Backup',
-    'cycles'    => 'Rotinas de Backup',
-    'next'      => 'Próximas Execuções',
-    'last'      => 'Últimas Execuções',
-    'settings'  => 'Configurações',
-];
+    $tabs = [
+        'backup'    => 'Backup',
+        'cycles'    => 'Rotinas de Backup',
+        'next'      => 'Próximas Execuções',
+        'last'      => 'Últimas Execuções',
+        'settings'  => 'Configurações',
+    ];
 
     // CSS leve compartilhado (chips + “pílulas”)
     ?>
@@ -142,35 +137,12 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
           <input type="hidden" name="parts_sel[]" value="" id="ptsb-parts-hidden-sentinel" />
 
        <div class="ptsb-chips" id="ptsb-chips">
-
-  <label class="ptsb-chip" data-letter="D">
-    <input type="checkbox" checked data-letter="D">
-    <span class="dashicons dashicons-database"></span> Banco de Dados
-  </label>
-  <label class="ptsb-chip" data-letter="P">
-    <input type="checkbox" checked data-letter="P">
-    <span class="dashicons dashicons-admin-plugins"></span> Plugins
-  </label>
-  <label class="ptsb-chip" data-letter="T">
-    <input type="checkbox" checked data-letter="T">
-    <span class="dashicons dashicons-admin-appearance"></span> Temas
-  </label>
-  <label class="ptsb-chip" data-letter="W">
-    <input type="checkbox" checked data-letter="W">
-    <span class="dashicons dashicons-wordpress-alt"></span> Core
-  </label>
-  <label class="ptsb-chip" data-letter="S">
-    <input type="checkbox" checked data-letter="S">
-    <span class="dashicons dashicons-editor-code"></span> Scripts
-  </label>
-  <label class="ptsb-chip" data-letter="M">
-    <input type="checkbox" checked data-letter="M">
-    <span class="dashicons dashicons-admin-media"></span> Mídia
-  </label>
-  <label class="ptsb-chip" data-letter="O">
-    <input type="checkbox" checked data-letter="O">
-    <span class="dashicons dashicons-image-filter"></span> Outros
-  </label>
+  <?php foreach ($default_letters as $letter): $meta = $default_letters_meta[$letter]; ?>
+    <label class="ptsb-chip" data-letter="<?php echo esc_attr($letter); ?>" title="<?php echo esc_attr($meta['text']); ?>">
+      <input type="checkbox" checked data-letter="<?php echo esc_attr($letter); ?>">
+      <span class="dashicons <?php echo esc_attr($meta['icon']); ?>"></span> <?php echo esc_html($meta['text']); ?>
+    </label>
+  <?php endforeach; ?>
 </div>
 
 
@@ -212,7 +184,6 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
         </div>
 
         <!-- Arquivos no Drive -->
-       <!-- Arquivos no Drive -->
 <h2 style="margin-top:24px !important">Arquivos no Google Drive  <a class="button button-small" style="margin-left:8px"
      href="<?php echo esc_url( add_query_arg(['force'=>1], $base) ); ?>">Forçar atualizar</a></h2>
 <?php
@@ -349,7 +320,6 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
       </button>
     </form>
 
-    <!-- Toggle “Sempre manter” (inalterado) -->
     <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>" class="ptsb-keep-form">
       <?php wp_nonce_field('ptsb_nonce'); ?>
       <input type="hidden" name="action" value="ptsb_do"/>
@@ -417,7 +387,6 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
   <!-- ===== ABA: ROTINAS ===== -->
   <h2 style="margin-top:22px">Rotinas de backup</h2>
 
-  <!-- NOVO: botão/abridor "Adicionar rotina" (sem ícone) logo abaixo do título -->
   <div style="margin:10px 0 14px;">
   <details>
     <summary class="button button-primary">Adicionar rotina</summary>
@@ -434,34 +403,12 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
 
 
 <div class="ptsb-chips" id="ptsb-add-letters" style="margin-bottom:16px">
-  <label class="ptsb-chip" title="Banco de Dados">
-    <input type="checkbox" checked data-letter="D">
-    <span class="dashicons dashicons-database"></span> Banco de Dados
-  </label>
-  <label class="ptsb-chip" title="Plugins">
-    <input type="checkbox" checked data-letter="P">
-    <span class="dashicons dashicons-admin-plugins"></span> Plugins
-  </label>
-  <label class="ptsb-chip" title="Temas">
-    <input type="checkbox" checked data-letter="T">
-    <span class="dashicons dashicons-admin-appearance"></span> Temas
-  </label>
-  <label class="ptsb-chip" title="Core">
-    <input type="checkbox" checked data-letter="W">
-    <span class="dashicons dashicons-wordpress-alt"></span> Core
-  </label>
-  <label class="ptsb-chip" title="Scripts">
-    <input type="checkbox" checked data-letter="S">
-    <span class="dashicons dashicons-editor-code"></span> Scripts
-  </label>
-  <label class="ptsb-chip" title="Mídia">
-    <input type="checkbox" checked data-letter="M">
-    <span class="dashicons dashicons-admin-media"></span> Mídia
-  </label>
-  <label class="ptsb-chip" title="Outros">
-    <input type="checkbox" checked data-letter="O">
-    <span class="dashicons dashicons-image-filter"></span> Outros
-  </label>
+  <?php foreach ($default_letters as $letter): $meta = $default_letters_meta[$letter]; ?>
+    <label class="ptsb-chip" data-letter="<?php echo esc_attr($letter); ?>" title="<?php echo esc_attr($meta['text']); ?>">
+      <input type="checkbox" checked data-letter="<?php echo esc_attr($letter); ?>">
+      <span class="dashicons <?php echo esc_attr($meta['icon']); ?>"></span> <?php echo esc_html($meta['text']); ?>
+    </label>
+  <?php endforeach; ?>
 </div>
 
 
@@ -477,7 +424,6 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
 </label>
 
 
-<!-- Toggle: Sempre manter -->
 <div class="ptsb-keep-toggle" style="margin-left:8px">
   <label class="ptsb-switch" title="Sempre manter">
     <input type="checkbox" name="keep_forever" value="1">
@@ -566,11 +512,10 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
     <select name="every_unit">
       <option value="minute">minuto(s)</option>
       <option value="hour"  selected>hora(s)</option>
-      <option value="day">dia(s)</option> <!-- NOVO -->
+      <option value="day">dia(s)</option>
     </select>
   </label>
 
-  <!-- NOVO: toggle para desativar a janela (ligado por padrão) -->
   <label class="ptsb-keep-toggle" style="margin-left:10px" title="Ignorar início/fim; usar o dia inteiro">
     <label class="ptsb-switch" style="margin-right:6px">
       <input type="checkbox" name="win_disable" value="1" checked>
@@ -590,7 +535,6 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
 
                    <input type="hidden" name="policy_one" value="queue">
           <div style="margin-top:10px"><button class="button button-primary">Salvar rotina</button>
- <!-- Toggle "Ativar ao salvar" agora ao lado do botão -->
   <div class="ptsb-keep-toggle" title="Ativar ao salvar">
     <label class="ptsb-switch">
       <input type="checkbox" name="enabled" value="1" checked>
@@ -632,7 +576,7 @@ $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'i
             <?php else:
               foreach ($cycles as $c):
                 $cid = esc_attr($c['id']);
-                $parts_letters = array_values(array_intersect(array_map('strtoupper', (array)($c['letters']??[])), ['D','P','T','W','S','M','O']));
+                $parts_letters = array_values(array_intersect(array_map('strtoupper', (array)($c['letters'] ?? [])), $default_letters));
                $mode = strtolower($c['mode'] ?? 'daily');
 if ($mode === 'daily') {
     $freq = 'Diário';
@@ -936,7 +880,6 @@ $last_exp = isset($_GET['last_exp']) ? (int)!!$_GET['last_exp'] : 1; // 0 ou 1
 $last_ok  = isset($_GET['last_ok'])  ? (int)!!$_GET['last_ok']  : 1; // 0 ou 1
 
 
- // >>> ADIÇÃO: parâmetros de paginação desta aba
   $per_default_l = (int) get_option('ptsb_last_per_page', 20);
   $per_last = isset($_GET['per_last']) ? (int) $_GET['per_last'] : ($per_default_l > 0 ? $per_default_l : 20);
   $per_last = max(1, min($per_last, 20));
@@ -944,7 +887,7 @@ $last_ok  = isset($_GET['last_ok'])  ? (int)!!$_GET['last_ok']  : 1; // 0 ou 1
 
   $page_last = max(1, (int)($_GET['page_last'] ?? 1));
 
-   // 1) filtra por vencidos/ok
+  // 1) filtra por vencidos/ok
 $filtered = [];
 foreach ($rows as $r) {
   $time = $r['time']; $file = $r['file'];
@@ -1064,11 +1007,10 @@ $script_data['urls']['lastPager'] = add_query_arg([
   $rotina_label = ptsb_run_kind_label($manifest, $file);
   $letters      = [];
   if (!empty($manifest['parts'])) $letters = ptsb_parts_to_letters($manifest['parts']);
-  if (!$letters) $letters = ['D','P','T','W','S','M','O'];
+  if (!$letters) $letters = $default_letters;
   $is_kept  = !empty($keepers[$file]);
   $keepDays = ptsb_manifest_keep_days($manifest, (int)$set['keep_days']);
 
-  // >>> NOVO: detecção de vencido (somente se não for "sempre manter")
   $ri = null; $is_expired = false;
   if (!$is_kept && is_int($keepDays) && $keepDays > 0) {
       $ri = ptsb_retention_calc($time, $keepDays);
@@ -1096,7 +1038,6 @@ $script_data['urls']['lastPager'] = add_query_arg([
         <?php echo (int)$ri['x'].'/'.(int)$ri['y']; ?>
       </span>
       <?php if ($is_expired): ?>
-        <!-- >>> NOVO: selo VENCIDO nesta aba -->
         <span class="ptsb-tag vencido">VENCIDO</span>
       <?php endif; ?>
     <?php else: ?>
