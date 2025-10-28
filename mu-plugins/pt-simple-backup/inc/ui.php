@@ -17,6 +17,16 @@ if (!defined('ABSPATH')) { exit; }
 function ptsb_render_backup_page() {
     if (!current_user_can('manage_options')) return;
 
+    if (!defined('DONOTCACHEPAGE')) {
+        define('DONOTCACHEPAGE', true);
+    }
+    if (!defined('DONOTCDN')) {
+        define('DONOTCDN', true);
+    }
+    if (!defined('DONOTCACHEDB')) {
+        define('DONOTCACHEDB', true);
+    }
+
     $cfg     = ptsb_cfg();
     $set     = ptsb_settings();
     $rows    = ptsb_list_remote_files();
