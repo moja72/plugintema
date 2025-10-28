@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.9] - 2025-11-01
+### Added
+- Captura de métricas de execução no script de backup, incluindo duração por etapa, bytes transferidos, uso de CPU/I-O e pico de memória.
+- Armazenamento de um histórico resumido das execuções com expiração automática para facilitar auditoria de performance.
+
 ## [0.8.8] - 2025-10-31
 ### Added
 - Script dedicado para acionar o `wp cron event run --due-now` via WP-CLI, permitindo agendamento pelo cron do sistema.

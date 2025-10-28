@@ -10,7 +10,115 @@ fail() {
   exit 1
 }
 
+metrics_now_ms() {
+  date +%s%3N
+}
+
+declare -A PTSB_METRICS_STEP_START=()
+declare -A PTSB_METRICS_STEP_DURATION=()
+
+PTSB_METRICS_START_MS=$(metrics_now_ms)
+PTSB_METRICS_START_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+PTSB_METRICS_BYTES=0
+PTSB_METRICS_SUCCESS=0
+PTSB_METRICS_CLK_TCK=$(getconf CLK_TCK 2>/dev/null || echo 100)
+PTSB_CPU_U_START=0
+PTSB_CPU_S_START=0
+PTSB_CPU_CU_START=0
+PTSB_CPU_CS_START=0
+
+if [[ -r "/proc/$$/stat" ]]; then
+  read -r PTSB_CPU_U_START PTSB_CPU_S_START PTSB_CPU_CU_START PTSB_CPU_CS_START < <(awk '{print $14" "$15" "$16" "$17}' "/proc/$$/stat") || true
+fi
+
+metrics_step_begin() {
+  local key="$1"
+  PTSB_METRICS_STEP_START["$key"]=$(metrics_now_ms)
+}
+
+metrics_step_end() {
+  local key="$1"
+  local start="${PTSB_METRICS_STEP_START[$key]:-}"
+  [[ -z "$start" ]] && return
+  local end
+  end=$(metrics_now_ms)
+  if [[ "$end" =~ ^[0-9]+$ && "$start" =~ ^[0-9]+$ ]]; then
+    local diff=$((end - start))
+    (( diff < 0 )) && diff=0
+    PTSB_METRICS_STEP_DURATION["$key"]=$diff
+  fi
+}
+
+metrics_json_escape() {
+  local raw="$1"
+  raw=${raw//\\/\\\\}
+  raw=${raw//\"/\\\"}
+  raw=${raw//$'\n'/\\n}
+  raw=${raw//$'\r'/\\r}
+  raw=${raw//$'\t'/\\t}
+  printf '%s' "$raw"
+}
+
+metrics_emit_summary() {
+  local end_ms
+  end_ms=$(metrics_now_ms)
+  local duration_ms=$((end_ms - PTSB_METRICS_START_MS))
+  (( duration_ms < 0 )) && duration_ms=0
+
+  local ended_iso
+  ended_iso=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+  local cpu_u=0 cpu_s=0 cpu_cu=0 cpu_cs=0
+  if [[ -r "/proc/$$/stat" ]]; then
+    read -r cpu_u cpu_s cpu_cu cpu_cs < <(awk '{print $14" "$15" "$16" "$17}' "/proc/$$/stat") || true
+  fi
+
+  local cpu_ticks=$(( (cpu_u - PTSB_CPU_U_START) + (cpu_s - PTSB_CPU_S_START) + (cpu_cu - PTSB_CPU_CU_START) + (cpu_cs - PTSB_CPU_CS_START) ))
+  (( cpu_ticks < 0 )) && cpu_ticks=0
+
+  local cpu_seconds
+  cpu_seconds=$(awk -v ticks="$cpu_ticks" -v hz="$PTSB_METRICS_CLK_TCK" 'BEGIN { if (hz <= 0) hz = 100; printf "%.3f", ticks / hz }')
+
+  local io_wait_seconds
+  io_wait_seconds=$(awk -v ms="$duration_ms" -v cpu="$cpu_seconds" 'BEGIN { wall = ms / 1000.0; c = cpu + 0.0; wait = wall - c; if (wait < 0) wait = 0; printf "%.3f", wait }')
+
+  local peak_kb=0
+  if [[ -r "/proc/$$/status" ]]; then
+    peak_kb=$(awk '/VmHWM:/ {print $2}' "/proc/$$/status" 2>/dev/null | head -n1)
+    peak_kb=${peak_kb:-0}
+  fi
+  local peak_bytes=$((peak_kb * 1024))
+
+  local steps_json="{}"
+  local -a order=("dump_db" "compress_db" "archive_bundle" "compress_bundle" "upload" "retention")
+  local -a step_entries=()
+  for key in "${order[@]}"; do
+    local value="${PTSB_METRICS_STEP_DURATION[$key]:-}"
+    [[ -z "$value" ]] && continue
+    step_entries+=("\"$key\":$value")
+  done
+  if (( ${#step_entries[@]} )); then
+    local steps_joined
+    local IFS=','
+    steps_joined="${step_entries[*]}"
+    steps_json="{${steps_joined}}"
+  fi
+
+  local started_escaped
+  started_escaped=$(metrics_json_escape "$PTSB_METRICS_START_ISO")
+  local ended_escaped
+  ended_escaped=$(metrics_json_escape "$ended_iso")
+
+  local bytes_transferred="${PTSB_METRICS_BYTES:-0}"
+  [[ -z "$bytes_transferred" ]] && bytes_transferred=0
+
+  log "METRICS {\"started_at\":\"${started_escaped}\",\"finished_at\":\"${ended_escaped}\",\"duration_ms\":${duration_ms},\"bytes_transferred\":${bytes_transferred},\"cpu_seconds\":${cpu_seconds},\"io_wait_seconds\":${io_wait_seconds},\"peak_memory_bytes\":${peak_bytes},\"steps\":${steps_json}}"
+}
+
 cleanup() {
+  if [[ ${PTSB_METRICS_SUCCESS:-0} -eq 1 ]]; then
+    metrics_emit_summary
+  fi
   if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR:-}" ]]; then
     rm -rf "$WORK_DIR"
   fi
@@ -96,8 +204,11 @@ PHP
   [[ -n "$DB_PORT" ]] && DUMP_CMD+=("-P" "$DB_PORT")
   [[ -n "$DB_SOCKET" ]] && DUMP_CMD+=("--socket" "$DB_SOCKET")
   DUMP_CMD+=("$DB_NAME")
+  metrics_step_begin "dump_db"
   MYSQL_PWD="$DB_PASS" "${DUMP_CMD[@]}" > "$SQL_FILE"
+  metrics_step_end "dump_db"
 
+  metrics_step_begin "compress_db"
   if command -v pigz >/dev/null 2>&1; then
     log "Compressing DB dump with pigz"
     pigz -9 "$SQL_FILE"
@@ -109,6 +220,7 @@ PHP
     SQL_FILE+=".gz"
     SQL_LABEL="database.sql.gz"
   fi
+  metrics_step_end "compress_db"
 fi
 
 # Monta lista de itens para o TAR
@@ -175,14 +287,23 @@ BUNDLE_TAR="$WORK_DIR/${BASE_NAME}.tar"
 BUNDLE_GZ="$BUNDLE_TAR.gz"
 
 log "Creating final bundle"
+metrics_step_begin "archive_bundle"
 tar -cf "$BUNDLE_TAR" "${TAR_ITEMS[@]}"
+metrics_step_end "archive_bundle"
 
+metrics_step_begin "compress_bundle"
 if command -v pigz >/dev/null 2>&1; then
   log "Compressing bundle with pigz"
   pigz -9 "$BUNDLE_TAR"
 else
   log "Compressing bundle with gzip"
   gzip -9 "$BUNDLE_TAR"
+fi
+metrics_step_end "compress_bundle"
+
+if [[ -f "$BUNDLE_GZ" ]]; then
+  PTSB_METRICS_BYTES=$(stat -c%s "$BUNDLE_GZ" 2>/dev/null || echo 0)
+  PTSB_METRICS_BYTES=${PTSB_METRICS_BYTES:-0}
 fi
 
 REMOTE_TRIM="${REMOTE%/}"
@@ -193,7 +314,9 @@ else
 fi
 
 log "Uploading to $REMOTE_TARGET"
+metrics_step_begin "upload"
 rclone copyto "$BUNDLE_GZ" "$REMOTE_TARGET"
+metrics_step_end "upload"
 
 log "Uploaded and removing local bundle"
 rm -f "$BUNDLE_GZ"
@@ -247,6 +370,9 @@ apply_retention() {
   done
 }
 
+metrics_step_begin "retention"
 apply_retention "${KEEP_DAYS:-0}" "$KEEP_FOREVER"
+metrics_step_end "retention"
 
 log "Backup finished successfully."
+PTSB_METRICS_SUCCESS=1
