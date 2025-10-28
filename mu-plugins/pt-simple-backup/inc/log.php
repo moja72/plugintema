@@ -281,6 +281,18 @@ function ptsb_maybe_notify_backup_done() {
         }
     }
 
+    $chunkState = ptsb_chunk_plan_complete((string)$latest['file']);
+    if (!empty($chunkState['noop'])) {
+        return;
+    }
+    if (!$chunkState['final']) {
+        $completed = (int)($chunkState['completed'] ?? 0);
+        $remaining = (int)($chunkState['remaining'] ?? 0);
+        ptsb_log(sprintf('[chunk] Parte concluída (%d/%d). Aguardando próximo chunk.', $completed, $completed + $remaining));
+        return;
+    }
+    $chunkOriginalParts = (string)($chunkState['original_parts'] ?? '');
+
     // === LOCK anti-duplicidade (apenas 1 request envia) ===
     $lock_opt = 'ptsb_notify_lock';
     $got_lock = add_option($lock_opt, (string)$latest['file'], '', 'no'); // true se criou
@@ -306,7 +318,13 @@ function ptsb_maybe_notify_backup_done() {
         $man = ptsb_manifest_read($latest['file']);
 
         // PARTES (CSV) -> letras + rótulos humanos
-        $partsCsv = (string)($man['parts'] ?? get_option('ptsb_last_run_parts', ''));
+        $partsCsv = (string)($man['parts'] ?? '');
+        if ($partsCsv === '' && $chunkOriginalParts !== '') {
+            $partsCsv = $chunkOriginalParts;
+        }
+        if ($partsCsv === '') {
+            $partsCsv = (string) get_option('ptsb_last_run_parts', '');
+        }
         if ($partsCsv === '') {
             $partsCsv = apply_filters('ptsb_default_parts', 'db,plugins,themes,uploads,langs,config,scripts');
         }
