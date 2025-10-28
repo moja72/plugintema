@@ -487,9 +487,18 @@ function ptsb_maybe_notify_backup_done() {
         $keepDays    = ($keepDaysMan === null) ? ($intent_forever ? 0 : max(1, (int)$intent_kdays)) : (int)$keepDaysMan;
 
         // se for "sempre manter", garante o sidecar .keep
-        $keepers = ptsb_keep_map();
-        if ($keepDays === 0 && empty($keepers[$latest['file']])) {
-            ptsb_apply_keep_sidecar($latest['file']);
+        if ($keepDays === 0) {
+            static $keepersCache = null;
+
+            // Carrega o mapa sob demanda porque envolve uma chamada remota via rclone.
+            if (!is_array($keepersCache)) {
+                $keepersCache = ptsb_keep_map();
+            }
+
+            if (empty($keepersCache[$latest['file']])) {
+                ptsb_apply_keep_sidecar($latest['file']);
+                $keepersCache[$latest['file']] = true;
+            }
         }
 
         // rótulos de retenção
