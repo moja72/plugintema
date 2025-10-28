@@ -756,8 +756,3 @@ function ptsb_run_metrics_history_add(array $entry): void {
     update_option($option, $filtered, false);
 }
 
-function ptsb_get_run_metrics_history(): array {
-    $history = get_option('ptsb_run_metrics_history', []);
-    return is_array($history) ? $history : [];
-}
-

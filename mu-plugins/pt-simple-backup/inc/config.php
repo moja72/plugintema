@@ -71,10 +71,6 @@ function ptsb_cfg(bool $refresh = false) {
     return $cache;
 }
 
-function ptsb_cfg_flush(): void {
-    ptsb_cfg(true);
-}
-
 function ptsb_get_nonce(): string {
     static $nonce = null;
     if ($nonce === null) {
@@ -519,15 +515,7 @@ function ptsb_to_utf8($s) {
     return $out !== false ? $out : $s;
 }
 
-/* ===== Tamanhos e máscara de e-mail (usados no resumo do Drive) ===== */
-
-function ptsb_mask_email($email, $keep = 7) {
-    $email = trim((string)$email);
-    if ($email === '' || strpos($email, '@') === false) return $email;
-    [$left, $domain] = explode('@', $email, 2);
-    $keep = max(1, min((int)$keep, strlen($left)));
-    return substr($left, 0, $keep) . '...@' . $domain;
-}
+/* ===== Tamanhos (usados no resumo do Drive) ===== */
 
 function ptsb_hsize_compact($bytes) {
     $b = (float)$bytes;

@@ -1,15 +1,18 @@
 # Changelog
 
-## [0.8.12] - 2025-11-03
+## [0.8.13] - 2025-11-03
 ### Changed
 - Removemos comentários e blocos redundantes da UI, mantendo a página de backup mais enxuta sem perder funcionalidades.
 - Centralizamos os metadados dos chips de seleção de partes, evitando duplicação de marcação em `inc/ui.php`.
+
+## [0.8.12] - 2025-10-28
+### Removed
+- Eliminamos helpers e utilitários não utilizados para simplificar a base de código.
 
 ## [0.8.11] - 2025-11-02
 ### Changed
 - Restringimos as execuções automáticas às janelas de manutenção configuradas (padrão 02:00–05:00 BRT), mantendo a fila pausada até o horário liberado.
 - Ajustamos o disparo do script para aplicar prioridades configuráveis via nice/ionice e, quando disponível, limitar CPU com `cpulimit`.
-
 
 ## [0.8.10] - 2025-10-28
 ### Fixed

@@ -22,21 +22,6 @@ function ptsb_parts_to_labels($partsStr): array {
     return $out;
 }
 
-/** LETRAS a partir de "parts" (para badges P,T,W,S,M,O na tabela) */
-
-function ptsb_letters_from_parts($partsStr): array {
-    $p = array_filter(array_map('trim', explode(',', strtolower((string)$partsStr))));
-    return [
-        'p' => in_array('plugins',$p,true),
-        't' => in_array('themes',$p,true),
-        'w' => in_array('core',$p,true), // só core
-        's' => in_array('scripts',$p,true),
-        'm' => in_array('uploads',$p,true),
-        'o' => in_array('others',$p,true) || in_array('langs',$p,true) || in_array('config',$p,true),
-        'd' => in_array('db',$p,true),
-    ];
-}
-
 /* -------------------------------------------------------
  * Seleção da UI (chips) ? PARTS= do script
  * -----------------------------------------------------*/
