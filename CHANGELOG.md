@@ -2,6 +2,7 @@
 
 ## [0.8.14] - 2025-10-28
 ### Removed
+- Eliminamos estilos legados e variáveis JavaScript não utilizadas para manter os assets do painel mais leves.
 - Eliminamos fallbacks legados que reconstruíam `PARTS` a partir das letras selecionadas, confiando na função atual `ptsb_letters_to_parts_csv`.
 - Removemos o helper `ptsb_map_ui_codes_to_parts`, que não era mais utilizado após a migração da interface.
 

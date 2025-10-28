@@ -73,10 +73,6 @@
   display:inline-flex; align-items:center; gap:12px; flex-wrap:wrap;
   margin:8px 0 10px;
 }
-#ptsb-per-form input[name="per"]{
-  height:32px; border-radius:8px; text-align:center;
-}
-
 /* Botão renomear (ícone apenas) */
 .ptsb-rename-btn{ background:none !important; border:none !important; }
 
@@ -92,9 +88,6 @@
 .ptsb-chip.active{ background:#2271b1; color:#fff; border-color:#2271b1; }
 /* Compat: pinta quando o <input> interno está marcado */
 .ptsb-chip:has(input:checked){ background:#2271b1; color:#fff; border-color:#2271b1; }
-
-/* Coluna “Backup”: impedir quebra */
-td.ptsb-backup-cell{ white-space:nowrap; }
 
 /* Mini chips (ícones) */
 .ptsb-mini{
@@ -139,10 +132,6 @@ tr.ptsb-expired td { color:#bfbfbf; }
 .ptsb-switch input:checked + .ptsb-slider{ background:#2271b1; }
 .ptsb-switch input:checked + .ptsb-slider:before{ transform:translateX(20px); }
 
-/* Retenção: badge + toggle + texto em uma linha */
-.ptsb-keep-wrap{
-  display:inline-flex; align-items:center; gap:10px; white-space:nowrap;
-}
 .ptsb-keep-form{ display:inline; margin:0; }
 .ptsb-keep-toggle{
   display:inline-flex; align-items:center; gap:8px; vertical-align:middle;

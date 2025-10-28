@@ -8,8 +8,6 @@
   const defaults = data.defaults || {};
   const defaultLetters = Array.isArray(defaults.letters) ? defaults.letters : ['D', 'P', 'T', 'W', 'S', 'M', 'O'];
   const urls = data.urls || {};
-  const perPage = data.perPage || {};
-  const filters = data.filters || {};
   const manualStatusDefaults = data.manualStatus || {};
 
   function ready(fn) {
