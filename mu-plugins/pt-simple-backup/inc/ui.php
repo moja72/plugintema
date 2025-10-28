@@ -42,6 +42,9 @@ if (!in_array($tab, ['backup','cycles','next','last','settings'], true)) $tab = 
     $diag[] = 'log '.(ptsb_is_readable($cfg['log']) ? 'legivel' : 'sem leitura');
     $diag[] = 'backup.sh '.(@is_executable($cfg['script_backup']) ? 'executavel' : 'sem permissao');
     $diag[] = 'restore.sh '.(@is_executable($cfg['script_restore']) ? 'executavel' : 'sem permissao');
+    if (!empty($cfg['cron_runner'])) {
+        $diag[] = 'wp-cron.sh '.(@is_executable($cfg['cron_runner']) ? 'executavel' : 'sem permissao');
+    }
 
     $nonce = ptsb_get_nonce();
 
@@ -1140,7 +1143,39 @@ $script_data['urls']['lastPager'] = add_query_arg([
 <?php elseif ($tab === 'settings'): ?>
 
   <!-- ===== ABA: CONFIGURAÇÕES ===== -->
-  <h2 style="margin-top:8px">Log</h2>
+  <?php
+    $cronScriptPath = '';
+    $cronScriptReal = !empty($cfg['cron_runner']) ? (string) $cfg['cron_runner'] : '';
+    if ($cronScriptReal !== '' && file_exists($cronScriptReal)) {
+        $cronScriptPath = function_exists('wp_normalize_path') ? wp_normalize_path($cronScriptReal) : $cronScriptReal;
+    }
+    $cronCommand = $cronScriptPath !== ''
+        ? '*/5 * * * * /usr/bin/env bash ' . $cronScriptPath . ' >/dev/null 2>&1'
+        : '';
+  ?>
+
+  <h2 style="margin-top:8px">Cron do sistema</h2>
+  <p class="description">
+    Agende este script no cron do servidor para rodar o <code>wp cron event run --due-now</code> via WP-CLI.
+    Isso garante que os hooks do backup sejam executados mesmo sem visitas ao site.
+  </p>
+  <?php if ($cronCommand !== ''): ?>
+    <pre style="margin:8px 0;padding:10px;background:#111;border:1px solid #444;border-radius:4px;overflow:auto;">
+<?php echo esc_html($cronCommand); ?>
+    </pre>
+    <p class="description" style="margin-top:4px;">
+      Ajuste a frequência conforme necessário (recomendado: a cada 1 ou 5 minutos).
+    </p>
+    <p class="description" style="margin-top:4px;">
+      Utilize a variável de ambiente <code>WP_PATH</code> se o WordPress estiver em outro diretório.
+    </p>
+  <?php else: ?>
+    <p class="description" style="color:#cc1818;">
+      Script não encontrado em <code><?php echo esc_html($cronScriptReal ?: '(indefinido)'); ?></code>. Verifique a instalação.
+    </p>
+  <?php endif; ?>
+
+  <h2 style="margin-top:24px">Log</h2>
 
 
 

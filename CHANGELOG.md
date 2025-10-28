@@ -1,8 +1,9 @@
 # Changelog
 
 ## [0.8.8] - 2025-10-31
-### Changed
-- Marcadas opções volumosas como `autoload=no` e movido o payload da última notificação para arquivo dedicado em `wp-content/uploads/pt-simple-backup/`, reduzindo leituras pesadas na tabela `options`.
+### Added
+- Script dedicado para acionar o `wp cron event run --due-now` via WP-CLI, permitindo agendamento pelo cron do sistema.
+- Orientação na aba de configurações sobre como configurar o cron externo utilizando o novo script.
 
 ## [0.8.7] - 2025-10-30
 ### Changed
