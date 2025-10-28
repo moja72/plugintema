@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.9] - 2025-10-28
+### Fixed
+- Evitamos que uma falha em um chunk interrompa todo o ciclo de backup, reagendando apenas a parte afetada com retries e backoff.
+
+### Changed
+- Implementamos marcação de exceções permanentes para chunks que excedem o limite de tentativas ou apresentam erros não recuperáveis.
+
 ## [0.8.8] - 2025-10-31
 ### Added
 - Script dedicado para acionar o `wp cron event run --due-now` via WP-CLI, permitindo agendamento pelo cron do sistema.

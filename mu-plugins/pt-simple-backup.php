@@ -2,7 +2,7 @@
 /**
  * Plugin Name: PT Simple Backup
  * Description: Interface e agendamento para backups com rclone no ambiente MU.
- * Version: 0.8.8
+ * Version: 0.8.9
  */
 
 if (!defined('ABSPATH')) { exit; }
