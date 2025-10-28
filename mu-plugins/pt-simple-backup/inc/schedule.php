@@ -284,6 +284,247 @@ function ptsb_uuid4(){
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($d), 4));
 }
 
+/* -------------------------------------------------------
+ * Chunking / fila de partes
+ * -----------------------------------------------------*/
+
+function ptsb_chunk_plan_key(): string {
+    return 'ptsb_chunk_plan_v1';
+}
+
+function ptsb_chunk_plan_get(): array {
+    $plan = get_option(ptsb_chunk_plan_key(), []);
+    if (!is_array($plan)) {
+        $plan = [];
+    }
+
+    $defaults = [
+        'active'          => false,
+        'meta'            => [],
+        'current'         => null,
+        'queue'           => [],
+        'completed'       => [],
+        'original_parts'  => '',
+    ];
+
+    $plan = array_merge($defaults, $plan);
+    if (!is_array($plan['meta'])) {
+        $plan['meta'] = [];
+    }
+    if (!is_array($plan['queue'])) {
+        $plan['queue'] = [];
+    }
+    if (!is_array($plan['completed'])) {
+        $plan['completed'] = [];
+    }
+    if (!is_array($plan['current'])) {
+        $plan['current'] = null;
+    }
+
+    return $plan;
+}
+
+function ptsb_chunk_plan_save(array $plan): void {
+    update_option(ptsb_chunk_plan_key(), $plan, true);
+}
+
+function ptsb_chunk_plan_reset(): void {
+    delete_option(ptsb_chunk_plan_key());
+}
+
+function ptsb_chunk_plan_build(array $parts): array {
+    $parts = array_values(array_unique(array_map('strtolower', $parts)));
+    $sequence = [];
+    $remaining = $parts;
+
+    $groups = [
+        ['key' => 'core',    'parts' => ['db', 'core', 'config', 'langs', 'scripts']],
+        ['key' => 'themes',  'parts' => ['themes']],
+        ['key' => 'plugins', 'parts' => ['plugins']],
+        ['key' => 'uploads', 'parts' => ['uploads']],
+        ['key' => 'others',  'parts' => ['others']],
+    ];
+
+    foreach ($groups as $group) {
+        $chunk = array_values(array_intersect($remaining, $group['parts']));
+        if ($chunk) {
+            $sequence[] = [
+                'key'   => $group['key'],
+                'parts' => $chunk,
+            ];
+            $remaining = array_values(array_diff($remaining, $chunk));
+        }
+    }
+
+    if ($remaining) {
+        $sequence[] = [
+            'key'   => 'misc',
+            'parts' => array_values($remaining),
+        ];
+    }
+
+    return $sequence;
+}
+
+function ptsb_chunk_plan_prepare(string $partsCsv, array $meta): array {
+    $plan = ptsb_chunk_plan_get();
+
+    if (!empty($plan['active'])) {
+        if (is_array($plan['current']) && !empty($plan['current']['parts_csv'])) {
+            return $plan['current'];
+        }
+        if ($plan['queue']) {
+            $current = array_shift($plan['queue']);
+            $current['parts_csv'] = implode(',', $current['parts']);
+            $current['started_at'] = time();
+            $plan['current'] = $current;
+            ptsb_chunk_plan_save($plan);
+            return $current;
+        }
+        ptsb_chunk_plan_reset();
+    }
+
+    $parts = array_filter(array_map('trim', explode(',', strtolower($partsCsv))));
+    $sequence = ptsb_chunk_plan_build($parts);
+
+    if (count($sequence) <= 1) {
+        ptsb_chunk_plan_reset();
+        return [
+            'key'        => 'single',
+            'parts'      => $parts,
+            'parts_csv'  => $partsCsv,
+            'index'      => 1,
+            'total'      => 1,
+            'started_at' => time(),
+        ];
+    }
+
+    $queue = [];
+    $total = count($sequence);
+    foreach ($sequence as $idx => $item) {
+        $entry = [
+            'key'        => $item['key'],
+            'parts'      => $item['parts'],
+            'parts_csv'  => implode(',', $item['parts']),
+            'index'      => $idx + 1,
+            'total'      => $total,
+        ];
+        if ($idx === 0) {
+            $current = $entry;
+            $current['started_at'] = time();
+        } else {
+            $queue[] = $entry;
+        }
+    }
+
+    $plan = [
+        'active'         => true,
+        'meta'           => array_merge([
+            'prefix'              => '',
+            'keep_days'           => null,
+            'keep_forever'        => false,
+            'original_parts_csv'  => $partsCsv,
+        ], $meta),
+        'current'        => $current,
+        'queue'          => $queue,
+        'completed'      => [],
+        'original_parts' => $partsCsv,
+    ];
+
+    ptsb_chunk_plan_save($plan);
+    return $current;
+}
+
+function ptsb_chunk_plan_schedule_next(): void {
+    $hook = 'ptsb_run_chunk_next';
+    if (!wp_next_scheduled($hook)) {
+        wp_schedule_single_event(time() + 30, $hook);
+    }
+}
+
+function ptsb_chunk_plan_trigger_next(): void {
+    $plan = ptsb_chunk_plan_get();
+    if (empty($plan['active']) || !empty($plan['current']) || empty($plan['queue'])) {
+        return;
+    }
+
+    $current = array_shift($plan['queue']);
+    $current['parts_csv']  = implode(',', $current['parts']);
+    $current['started_at'] = time();
+    $plan['current'] = $current;
+    ptsb_chunk_plan_save($plan);
+
+    $meta        = $plan['meta'];
+    $prefix      = (string)($meta['prefix'] ?? ptsb_cfg()['prefix']);
+    $keepDays    = isset($meta['keep_days']) ? (int)$meta['keep_days'] : (int)ptsb_settings()['keep_days'];
+    $keepForever = !empty($meta['keep_forever']);
+
+    $extraEnv = [
+        'PARTS_CHUNK_INDEX' => (int)($current['index'] ?? 1),
+        'PARTS_CHUNK_TOTAL' => (int)($current['total'] ?? 1),
+        'PARTS_CHUNK_LABEL' => (string)($current['key'] ?? ''),
+    ];
+
+    if (!ptsb_run_backup_job($current['parts_csv'], $prefix, $keepDays, $keepForever, $extraEnv, ['chunk'=>$current, 'meta'=>$meta])) {
+        // Falhou em disparar próximo chunk: devolve ao início da fila
+        $plan = ptsb_chunk_plan_get();
+        $plan['current'] = null;
+        array_unshift($plan['queue'], $current);
+        ptsb_chunk_plan_save($plan);
+    }
+}
+
+function ptsb_chunk_plan_complete(string $file): array {
+    $plan = ptsb_chunk_plan_get();
+    if (empty($plan['active'])) {
+        ptsb_chunk_plan_reset();
+        return ['final' => true, 'meta' => []];
+    }
+
+    if (!is_array($plan['current'])) {
+        return [
+            'final'          => empty($plan['queue']),
+            'meta'           => $plan['meta'],
+            'remaining'      => count($plan['queue']),
+            'completed'      => count($plan['completed']),
+            'original_parts' => (string)($plan['meta']['original_parts_csv'] ?? $plan['original_parts']),
+            'noop'           => true,
+        ];
+    }
+
+    $current = $plan['current'];
+    $current['file']        = $file;
+    $current['finished_at'] = time();
+    $plan['completed'][]    = $current;
+    $plan['current']        = null;
+    $plan['meta']['last_file'] = $file;
+
+    if (!empty($plan['queue'])) {
+        ptsb_chunk_plan_save($plan);
+        ptsb_chunk_plan_schedule_next();
+        return [
+            'final'          => false,
+            'meta'           => $plan['meta'],
+            'remaining'      => count($plan['queue']),
+            'completed'      => count($plan['completed']),
+            'original_parts' => (string)($plan['meta']['original_parts_csv'] ?? $plan['original_parts']),
+            'noop'           => false,
+        ];
+    }
+
+    $plan['active'] = false;
+    ptsb_chunk_plan_save($plan);
+
+    return [
+        'final'          => true,
+        'meta'           => $plan['meta'],
+        'remaining'      => 0,
+        'completed'      => count($plan['completed']),
+        'original_parts' => (string)($plan['meta']['original_parts_csv'] ?? $plan['original_parts']),
+        'noop'           => false,
+    ];
+}
+
 /* ---- Store: ciclos, estado, global ---- */
 
 function ptsb_cycles_get(){ $c = get_option('ptsb_cycles', []); return is_array($c)? $c: []; }
@@ -851,6 +1092,77 @@ update_option('ptsb_last_run_intent', [
 
 });
 
+add_action('ptsb_run_chunk_next', 'ptsb_chunk_plan_trigger_next');
+
+function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bool $keepForever, array $extraEnv = [], array $meta = []): bool {
+    if (!ptsb_can_shell()) {
+        return false;
+    }
+
+    $cfg   = ptsb_cfg();
+    $lock  = ptsb_lock_try_acquire();
+    if (!$lock) {
+        return false;
+    }
+
+    $token = (string)($lock['token'] ?? '');
+
+    ptsb_log_rotate_if_needed();
+
+    $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
+         . 'REMOTE='         . escapeshellarg($cfg['remote'])     . ' '
+         . 'WP_PATH='        . escapeshellarg(ABSPATH)            . ' '
+         . 'PREFIX='         . escapeshellarg($prefix)            . ' '
+         . 'KEEP_DAYS='      . escapeshellarg($keepDays)          . ' '
+         . 'KEEP='           . escapeshellarg($keepDays)          . ' '
+         . 'RETENTION_DAYS=' . escapeshellarg($keepDays)          . ' '
+         . 'RETENTION='      . escapeshellarg($keepDays)          . ' '
+         . 'KEEP_FOREVER='   . escapeshellarg($keepForever ? 1 : 0) . ' '
+         . 'PARTS='          . escapeshellarg($partsCsv)          . ' ';
+
+    foreach ($extraEnv as $key => $value) {
+        $name = strtoupper(preg_replace('/[^A-Z0-9_]/i', '_', (string)$key));
+        if ($name === '' || $name === 'PARTS' || $name === 'KEEP' || $name === 'KEEP_DAYS') {
+            continue;
+        }
+        $env .= $name . '=' . escapeshellarg((string)$value) . ' ';
+    }
+
+    $chunk = is_array($meta['chunk'] ?? null) ? $meta['chunk'] : [];
+    $total = (int)($chunk['total'] ?? 1);
+    $index = (int)($chunk['index'] ?? 1);
+    $label = (string)($chunk['key'] ?? '');
+
+    if ($total > 1) {
+        $tag = $label !== '' ? $label : 'partes';
+        ptsb_log(sprintf('Backup chunk %d/%d (%s) disparado: %s', $index, $total, $tag, $partsCsv));
+    } else {
+        ptsb_log('Backup disparado: '.$partsCsv);
+    }
+
+    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . escapeshellarg($cfg['script_backup'])
+         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
+
+    $result = shell_exec($cmd);
+    $pid    = 0;
+    if (is_string($result)) {
+        $trim = trim($result);
+        if ($trim !== '' && ctype_digit($trim)) {
+            $pid = (int) $trim;
+        } elseif (preg_match('/(\d+)/', $trim, $m)) {
+            $pid = (int) $m[1];
+        }
+    }
+
+    if ($pid > 0 && $token !== '') {
+        ptsb_lock_touch($token, ['pid' => $pid]);
+        return true;
+    }
+
+    ptsb_lock_release($token !== '' ? $token : null);
+    return false;
+}
+
 /* -------------------------------------------------------
  * DISPARO do backup — agora aceita override de PREFIX e KEEP_DAYS
  * -----------------------------------------------------*/
@@ -865,12 +1177,6 @@ update_option('ptsb_last_run_intent', [
 function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null){
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
-    if (!ptsb_can_shell()) return;
-    $lock = ptsb_lock_try_acquire();
-    if (!$lock) { return; }
-    $token = (string)($lock['token'] ?? '');
-
-    ptsb_log_rotate_if_needed();
 
     // 1) tenta última seleção (letras D,P,T,W,S,M,O)
     if ($partsCsv === null) {
@@ -894,45 +1200,49 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
 
     $prefix = ($overridePrefix !== null && $overridePrefix !== '') ? $overridePrefix : $cfg['prefix'];
 
-    // >>> ALTERAÇÃO: permitir 0 (sentinela "sempre manter")
     if ($overrideDays !== null) {
-        $keepDays = max(0, (int)$overrideDays);   // 0 = sempre manter; >0 = dias; null = usa padrão
+        $keepDays = max(0, (int)$overrideDays);
     } else {
         $keepDays = (int)$set['keep_days'];
     }
 
-    $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-         . 'REMOTE='           . escapeshellarg($cfg['remote'])     . ' '
-         . 'WP_PATH='          . escapeshellarg(ABSPATH)            . ' '
-         . 'PREFIX='           . escapeshellarg($prefix)            . ' '
-         . 'KEEP_DAYS='        . escapeshellarg($keepDays)          . ' '
-         . 'KEEP='             . escapeshellarg($keepDays)          . ' '
-         . 'RETENTION_DAYS='   . escapeshellarg($keepDays)          . ' '
-         . 'RETENTION='        . escapeshellarg($keepDays)          . ' '
-         . 'KEEP_FOREVER='     . escapeshellarg($keepDays === 0 ? 1 : 0) . ' ' // opcional p/ scripts que queiram esse flag
-         . 'PARTS='            . escapeshellarg($partsCsv);
+    $intent = get_option('ptsb_last_run_intent', []);
+    $origin = is_array($intent) ? (string)($intent['origin'] ?? '') : '';
+    $jobId  = is_array($intent) ? (string)($intent['job_id'] ?? '') : '';
 
-    // guarda as partes usadas neste disparo (fallback para a notificação)
-    update_option('ptsb_last_run_parts', (string)$partsCsv, true);
+    $meta = [
+        'prefix'             => $prefix,
+        'keep_days'          => $keepDays,
+        'keep_forever'       => ($keepDays === 0),
+        'origin'             => $origin,
+        'job_id'             => $jobId,
+        'original_parts_csv' => $partsCsv,
+    ];
 
-    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
-         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
+    $chunk = ptsb_chunk_plan_prepare($partsCsv, $meta);
+    $runParts = (string)($chunk['parts_csv'] ?? $partsCsv);
 
-    $result = shell_exec($cmd);
-    $pid    = 0;
-    if (is_string($result)) {
-        $trim = trim($result);
-        if ($trim !== '' && ctype_digit($trim)) {
-            $pid = (int) $trim;
-        } elseif (preg_match('/(\d+)/', $trim, $m)) {
-            $pid = (int) $m[1];
+    $planState    = ptsb_chunk_plan_get();
+    $reportParts  = $partsCsv;
+    if (!empty($planState['meta']['original_parts_csv'])) {
+        $reportParts = (string)$planState['meta']['original_parts_csv'];
+    }
+    update_option('ptsb_last_run_parts', $reportParts, true);
+
+    $extraEnv = [];
+    if (!empty($chunk['total']) && (int)$chunk['total'] > 1) {
+        $extraEnv['PARTS_CHUNK_INDEX'] = (int)$chunk['index'];
+        $extraEnv['PARTS_CHUNK_TOTAL'] = (int)$chunk['total'];
+        if (!empty($chunk['key'])) {
+            $extraEnv['PARTS_CHUNK_LABEL'] = (string)$chunk['key'];
         }
     }
 
-    if ($pid > 0 && $token !== '') {
-        ptsb_lock_touch($token, ['pid' => $pid]);
-    } else {
-        ptsb_lock_release($token !== '' ? $token : null);
+    if (!ptsb_run_backup_job($runParts, $prefix, $keepDays, $keepDays === 0, $extraEnv, ['chunk' => $chunk, 'meta' => $meta])) {
+        if (!empty($chunk['total']) && (int)$chunk['total'] > 1) {
+            // se falhou, limpa o plano para evitar ficar travado
+            ptsb_chunk_plan_reset();
+        }
     }
 }
 
@@ -941,37 +1251,15 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
 function ptsb_start_backup_with_parts(string $partsCsv): void {
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
-    if (!ptsb_can_shell()) return;
-    $lock = ptsb_lock_try_acquire();
-    if (!$lock) return;
-    $token = (string)($lock['token'] ?? '');
 
-    $env = 'PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 '
-         . 'REMOTE='     . escapeshellarg($cfg['remote'])     . ' '
-         . 'WP_PATH='    . escapeshellarg(ABSPATH)            . ' '
-         . 'PREFIX='     . escapeshellarg($cfg['prefix'])     . ' '
-         . 'KEEP_DAYS='  . escapeshellarg($set['keep_days'])  . ' '
-         . 'KEEP='       . escapeshellarg($set['keep_days']) . ' '
-         . 'PARTS='      . escapeshellarg($partsCsv);
+    update_option('ptsb_last_run_parts', (string)$partsCsv, true);
 
-    $cmd = 'nice -n 10 ionice -c2 -n7 /usr/bin/nohup /usr/bin/env ' . $env . ' ' . escapeshellarg($cfg['script_backup'])
-         . ' >> ' . escapeshellarg($cfg['log']) . ' 2>&1 & echo $!';
-    $result = shell_exec($cmd);
-    $pid    = 0;
-    if (is_string($result)) {
-        $trim = trim($result);
-        if ($trim !== '' && ctype_digit($trim)) {
-            $pid = (int) $trim;
-        } elseif (preg_match('/(\d+)/', $trim, $m)) {
-            $pid = (int) $m[1];
-        }
-    }
-
-    if ($pid > 0 && $token !== '') {
-        ptsb_lock_touch($token, ['pid' => $pid]);
-    } else {
-        ptsb_lock_release($token !== '' ? $token : null);
-    }
+    ptsb_run_backup_job(
+        $partsCsv,
+        (string)$cfg['prefix'],
+        (int)$set['keep_days'],
+        false
+    );
 }
 
 // checar notificação no admin e também no cron do plugin
