@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.15] - 2025-10-28
+### Changed
+- Adicionamos cache transitório para quota e e-mail do Drive com expiração configurável e limpeza manual via "Forçar atualizar".
+- Passamos a invalidar o cache quando o CLI falha, registrando log e exibindo placeholders na interface até a nova leitura.
+
 ## [0.8.14] - 2025-10-28
 ### Removed
 - Eliminamos estilos legados e variáveis JavaScript não utilizadas para manter os assets do painel mais leves.

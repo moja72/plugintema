@@ -16,8 +16,15 @@ function ptsb_render_backup_page() {
 
     $cfg     = ptsb_cfg();
     $set     = ptsb_settings();
-    $rows    = ptsb_list_remote_files();
-    $keepers = ptsb_keep_map();
+
+    $force_refresh = isset($_GET['force']) && (int)$_GET['force'] === 1;
+    if ($force_refresh) {
+        ptsb_remote_cache_flush();
+        ptsb_drive_info_clear_cache();
+    }
+
+    $rows    = ptsb_list_remote_files($force_refresh);
+    $keepers = ptsb_keep_map($force_refresh);
     $auto    = ptsb_auto_get();
     $default_letters = ['D','P','T','W','S','M','O'];
     $default_letters_meta = [
@@ -67,18 +74,17 @@ function ptsb_render_backup_page() {
         ],
     ];
 
-    $drive = ptsb_drive_info();
-
-    if (isset($_GET['force']) && (int)$_GET['force'] === 1) {
-        ptsb_remote_cache_flush();
-    }
+    $drive = ptsb_drive_info($force_refresh);
 
     $tot           = ptsb_backups_totals_cached();
     $bk_count      = (int) $tot['count'];
     $backups_total = (int) $tot['bytes'];
 
-    $usedStr  = ($drive['used']  !== null) ? ptsb_hsize_compact($drive['used'])  : '?';
-    $totalStr = ($drive['total'] !== null) ? ptsb_hsize_compact($drive['total']) : '?';
+    $usedStr  = ($drive['used']  !== null) ? ptsb_hsize_compact($drive['used'])  : '—';
+    $totalStr = ($drive['total'] !== null) ? ptsb_hsize_compact($drive['total']) : '—';
+    $storageStr = ($drive['used'] === null && $drive['total'] === null)
+        ? 'Dados temporariamente indisponíveis'
+        : $usedStr . ' / ' . $totalStr;
     $bkStr    = number_format_i18n($bk_count) . ' ' . ($bk_count === 1 ? 'item' : 'itens') . ' / ' . ptsb_hsize_compact($backups_total);
 
 
@@ -96,7 +102,7 @@ function ptsb_render_backup_page() {
     <div class="wrap">
       <h1><?php echo esc_html($h1); ?></h1>
       <p style="opacity:.7;margin:.3em 0 1em">
-        Armazenamento: <strong><?php echo esc_html($usedStr.' / '.$totalStr); ?></strong> |
+        Armazenamento: <strong><?php echo esc_html($storageStr); ?></strong> |
         Backups no Drive: <strong><?php echo esc_html($bkStr); ?></strong>
       </p>
 
