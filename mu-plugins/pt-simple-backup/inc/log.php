@@ -498,6 +498,14 @@ function ptsb_maybe_notify_backup_done() {
         ];
         ptsb_manifest_write($latest['file'], $manAdd, true);
 
+        ptsb_store_run_metrics_summary($latest, [
+            'parts'        => $partsCsv,
+            'keep_days'    => $keepDays,
+            'origin'       => $intent_origin,
+            'routine_mode' => $routine_mode,
+            'keep_forever' => ($keepDays === 0 ? 1 : 0),
+        ]);
+
         // payload da notificação
         $payload = [
             'file'               => (string)$latest['file'],
@@ -604,5 +612,137 @@ function ptsb_pre_option_last_notified_payload($pre) {
 
     $data = json_decode($json, true);
     return is_array($data) ? $data : $pre;
+}
+
+function ptsb_store_run_metrics_summary(array $latest, array $context): void {
+    $metrics = ptsb_log_extract_latest_metrics();
+    if (!is_array($metrics)) {
+        return;
+    }
+
+    $file = (string)($latest['file'] ?? '');
+    if ($file === '') {
+        return;
+    }
+
+    $finishedAt = (string)($latest['time'] ?? '');
+
+    $entry = [
+        'file'                => $file,
+        'finished_at'         => $finishedAt,
+        'duration_ms'         => isset($metrics['duration_ms']) ? max(0, (int)$metrics['duration_ms']) : 0,
+        'bytes_transferred'   => isset($metrics['bytes_transferred']) ? max(0, (int)$metrics['bytes_transferred']) : 0,
+        'io_wait_seconds'     => isset($metrics['io_wait_seconds']) ? (float) round((float) $metrics['io_wait_seconds'], 3) : 0.0,
+        'cpu_seconds'         => isset($metrics['cpu_seconds']) ? (float) round((float) $metrics['cpu_seconds'], 3) : 0.0,
+        'peak_memory_bytes'   => isset($metrics['peak_memory_bytes']) ? max(0, (int)$metrics['peak_memory_bytes']) : 0,
+    ];
+
+    if (!empty($metrics['started_at'])) {
+        $entry['started_at'] = (string) $metrics['started_at'];
+    }
+
+    if (!empty($metrics['steps']) && is_array($metrics['steps'])) {
+        $steps = [];
+        foreach ($metrics['steps'] as $name => $value) {
+            $key = preg_replace('/[^a-z0-9_\-]/i', '', (string) $name);
+            if ($key === '') {
+                continue;
+            }
+            $steps[$key] = max(0, (int) $value);
+        }
+        if ($steps) {
+            $entry['steps'] = $steps;
+        }
+    }
+
+    if (isset($context['parts'])) {
+        $entry['parts'] = (string) $context['parts'];
+    }
+    if (isset($context['keep_days'])) {
+        $entry['keep_days'] = (int) $context['keep_days'];
+    }
+    if (!empty($context['keep_forever']) || (isset($context['keep_days']) && (int) $context['keep_days'] === 0)) {
+        $entry['keep_forever'] = 1;
+    }
+
+    $origin = (string) ($context['origin'] ?? '');
+    $entry['origin'] = $origin !== '' ? $origin : 'manual';
+
+    if (!empty($context['routine_mode'])) {
+        $entry['routine_mode'] = (string) $context['routine_mode'];
+    }
+
+    ptsb_run_metrics_history_add($entry);
+}
+
+function ptsb_log_extract_latest_metrics(): ?array {
+    $cfg  = ptsb_cfg();
+    $path = (string) ($cfg['log'] ?? '');
+    if ($path === '' || !@file_exists($path)) {
+        return null;
+    }
+
+    $raw = ptsb_tail_log_raw($path, 400);
+    if (!is_string($raw) || $raw === '') {
+        return null;
+    }
+
+    $lines = preg_split('/\r?\n/', $raw);
+    if (!is_array($lines)) {
+        return null;
+    }
+
+    for ($i = count($lines) - 1; $i >= 0; $i--) {
+        $line = trim((string) $lines[$i]);
+        if ($line === '') {
+            continue;
+        }
+        if (!preg_match('/METRICS\s+({.+})$/', $line, $m)) {
+            continue;
+        }
+        $json = trim((string) $m[1]);
+        $decoded = json_decode($json, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            return $decoded;
+        }
+    }
+
+    return null;
+}
+
+function ptsb_run_metrics_history_add(array $entry): void {
+    $option  = 'ptsb_run_metrics_history';
+    $history = get_option($option, []);
+    if (!is_array($history)) {
+        $history = [];
+    }
+
+    $filtered = [];
+    foreach ($history as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if ((string) ($row['file'] ?? '') === (string) ($entry['file'] ?? '')) {
+            continue;
+        }
+        $filtered[] = $row;
+    }
+
+    array_unshift($filtered, $entry);
+
+    $max = (int) apply_filters('ptsb_metrics_history_max', 20);
+    if ($max <= 0) {
+        $max = 20;
+    }
+    if (count($filtered) > $max) {
+        $filtered = array_slice($filtered, 0, $max);
+    }
+
+    update_option($option, $filtered, false);
+}
+
+function ptsb_get_run_metrics_history(): array {
+    $history = get_option('ptsb_run_metrics_history', []);
+    return is_array($history) ? $history : [];
 }
 
