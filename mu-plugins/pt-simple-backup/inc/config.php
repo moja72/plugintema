@@ -199,6 +199,165 @@ function ptsb_remote_cache_flush(): void {
     delete_transient('ptsb_keep_map_v1');
 }
 
+/* -------------------------------------------------------
+ * Armazenamento em arquivos para blobs pesados
+ * -----------------------------------------------------*/
+
+function ptsb_blob_storage_dir(): string {
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+
+    $uploads = wp_upload_dir();
+    $baseDir = isset($uploads['basedir']) && $uploads['basedir'] !== ''
+        ? $uploads['basedir']
+        : (defined('WP_CONTENT_DIR') ? WP_CONTENT_DIR . '/uploads' : ABSPATH . 'wp-content/uploads');
+    $base    = trailingslashit($baseDir) . 'pt-simple-backup/options';
+
+    if (!is_dir($base)) {
+        if (function_exists('wp_mkdir_p')) {
+            wp_mkdir_p($base);
+        } else {
+            @mkdir($base, 0755, true);
+        }
+    }
+
+    $dir = $base;
+
+    return $dir;
+}
+
+function ptsb_blob_option_path(string $option): string {
+    $slug = preg_replace('/[^a-z0-9\-_.]/i', '-', $option);
+    $slug = trim($slug, '-');
+    if ($slug === '') {
+        $slug = md5($option);
+    }
+
+    return rtrim(ptsb_blob_storage_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'blob-' . $slug . '.json';
+}
+
+function ptsb_blob_option_write(string $option, $value): bool {
+    $path = ptsb_blob_option_path($option);
+    $dir  = dirname($path);
+
+    if (!is_dir($dir)) {
+        $created = false;
+        if (function_exists('wp_mkdir_p')) {
+            $created = wp_mkdir_p($dir);
+        } else {
+            $created = @mkdir($dir, 0755, true);
+        }
+        if (!$created) {
+            return false;
+        }
+    }
+
+    $json = wp_json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($json)) {
+        $json = json_encode($value);
+    }
+
+    if (!is_string($json)) {
+        return false;
+    }
+
+    return (bool) @file_put_contents($path, $json, LOCK_EX);
+}
+
+function ptsb_blob_option_read(string $option)
+{
+    $path = ptsb_blob_option_path($option);
+    if (!is_readable($path)) {
+        return null;
+    }
+
+    $json = @file_get_contents($path);
+    if ($json === false) {
+        return null;
+    }
+
+    if ($json === '') {
+        return [];
+    }
+
+    $data = json_decode($json, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return null;
+    }
+
+    return $data;
+}
+
+function ptsb_blob_option_delete(string $option): void {
+    $path = ptsb_blob_option_path($option);
+    if (is_file($path)) {
+        @unlink($path);
+    }
+}
+
+function ptsb_heavy_options_defaults(): array {
+    return [
+        'ptsb_chunk_plan_v1'        => [],
+        'ptsb_cycles'               => [],
+        'ptsb_cycles_state'         => [],
+        'ptsb_cycles_global'        => [],
+        'ptsb_last_notified_payload'=> [],
+        'ptsb_last_run_intent'      => [],
+    ];
+}
+
+function ptsb_register_heavy_option_filters(): void {
+    static $registered = false;
+    if ($registered) {
+        return;
+    }
+    $registered = true;
+
+    foreach (ptsb_heavy_options_defaults() as $option => $default) {
+        $callback = null;
+        $callback = function ($pre) use ($option, $default, &$callback) {
+            $data = ptsb_blob_option_read($option);
+            if ($data !== null) {
+                return $data;
+            }
+
+            remove_filter('pre_option_' . $option, $callback);
+            $dbValue = get_option($option, null);
+            add_filter('pre_option_' . $option, $callback);
+
+            if (is_array($dbValue) && array_key_exists('__ptsb_blob', $dbValue)) {
+                return $default;
+            }
+
+            if ($dbValue !== null) {
+                return $dbValue;
+            }
+
+            return $default;
+        };
+
+        add_filter('pre_option_' . $option, $callback, 10, 1);
+    }
+}
+
+function ptsb_option_update_heavy(string $option, $value): void {
+    $written = ptsb_blob_option_write($option, $value);
+    if ($written) {
+        update_option($option, ['__ptsb_blob' => 1, 'updated_at' => time()], false);
+    } else {
+        update_option($option, $value, false);
+    }
+}
+
+function ptsb_option_delete_heavy(string $option): void {
+    ptsb_blob_option_delete($option);
+    delete_option($option);
+}
+
+ptsb_register_heavy_option_filters();
+
 function ptsb_tail_cache_flush(string $path): void {
     $hash = md5($path);
     foreach ([50, 800] as $n) {

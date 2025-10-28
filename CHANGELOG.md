@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.8] - 2025-10-31
+### Changed
+- Movidos planos de chunking, ciclos e payloads volumosos para arquivos em `wp-content/uploads/pt-simple-backup/`, reduzindo leituras pesadas na tabela `wp_options`.
+- Ajustado autoload de opções complexas para `no`, evitando carregamento desnecessário em cada page load.
+
 ## [0.8.7] - 2025-10-30
 ### Changed
 - Implementado carregamento assíncrono dos detalhes dos backups com limite de 20 itens por requisição, evitando a decodificação imediata de manifests volumosos na interface.

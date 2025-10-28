@@ -97,7 +97,7 @@ function ptsb_drive_info() {
 function ptsb_plan_mark_keep_next($prefix){
     $prefix = (string)$prefix;
     if ($prefix === '') $prefix = ptsb_cfg()['prefix'];
-    update_option('ptsb_mark_keep_plan', ['prefix'=>$prefix, 'set_at'=>time()], true);
+    update_option('ptsb_mark_keep_plan', ['prefix'=>$prefix, 'set_at'=>time()], false);
 }
 
 function ptsb_apply_keep_sidecar($file){

@@ -394,8 +394,8 @@ if (!has_action('ptsb_backup_done') && !has_action('ptsb_backup_finished') && fu
 
 
         // marca como notificado
-        update_option('ptsb_last_notified_backup_file', (string)$latest['file'], true);
-        update_option('ptsb_last_notified_payload', $payload, true);
+        update_option('ptsb_last_notified_backup_file', (string)$latest['file'], false);
+        ptsb_option_update_heavy('ptsb_last_notified_payload', $payload);
 
         ptsb_log('[notify] evento disparado para '.$latest['file']);
     } finally {
