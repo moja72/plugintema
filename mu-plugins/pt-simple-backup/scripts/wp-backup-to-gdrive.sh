@@ -135,6 +135,21 @@ PARTS_RAW="${PARTS:-}"
 PREFIX="${PREFIX:-wpb-}"
 KEEP_DAYS="${KEEP_DAYS:-${KEEP:-0}}"
 KEEP_FOREVER="${KEEP_FOREVER:-0}"
+COMPRESSION_LEVEL_RAW="${COMPRESSION_LEVEL:-6}"
+COMPRESSION_LEVEL_FLAG=""
+
+if [[ "$COMPRESSION_LEVEL_RAW" =~ ^-?[0-9]$ ]]; then
+  if [[ "$COMPRESSION_LEVEL_RAW" == -* ]]; then
+    COMPRESSION_LEVEL_FLAG="$COMPRESSION_LEVEL_RAW"
+  else
+    COMPRESSION_LEVEL_FLAG="-$COMPRESSION_LEVEL_RAW"
+  fi
+else
+  log "COMPRESSION_LEVEL inválido ('${COMPRESSION_LEVEL_RAW}'), usando -6"
+  COMPRESSION_LEVEL_FLAG="-6"
+fi
+
+[[ -z "$COMPRESSION_LEVEL_FLAG" ]] && COMPRESSION_LEVEL_FLAG="-6"
 
 [[ -z "$REMOTE" ]] && fail "REMOTE não informado"
 [[ -z "$WP_PATH" ]] && fail "WP_PATH não informado"
@@ -210,13 +225,13 @@ PHP
 
   metrics_step_begin "compress_db"
   if command -v pigz >/dev/null 2>&1; then
-    log "Compressing DB dump with pigz"
-    pigz -9 "$SQL_FILE"
+    log "Compressing DB dump with pigz $COMPRESSION_LEVEL_FLAG"
+    pigz "$COMPRESSION_LEVEL_FLAG" "$SQL_FILE"
     SQL_FILE+=".gz"
     SQL_LABEL="database.sql.gz"
   else
-    log "Compressing DB dump with gzip"
-    gzip -9 "$SQL_FILE"
+    log "Compressing DB dump with gzip $COMPRESSION_LEVEL_FLAG"
+    gzip "$COMPRESSION_LEVEL_FLAG" "$SQL_FILE"
     SQL_FILE+=".gz"
     SQL_LABEL="database.sql.gz"
   fi
@@ -293,11 +308,11 @@ metrics_step_end "archive_bundle"
 
 metrics_step_begin "compress_bundle"
 if command -v pigz >/dev/null 2>&1; then
-  log "Compressing bundle with pigz"
-  pigz -9 "$BUNDLE_TAR"
+  log "Compressing bundle with pigz $COMPRESSION_LEVEL_FLAG"
+  pigz "$COMPRESSION_LEVEL_FLAG" "$BUNDLE_TAR"
 else
-  log "Compressing bundle with gzip"
-  gzip -9 "$BUNDLE_TAR"
+  log "Compressing bundle with gzip $COMPRESSION_LEVEL_FLAG"
+  gzip "$COMPRESSION_LEVEL_FLAG" "$BUNDLE_TAR"
 fi
 metrics_step_end "compress_bundle"
 

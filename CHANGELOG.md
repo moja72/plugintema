@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.15] - 2025-10-28
+### Changed
+- Tornamos configurável o nível de compressão dos arquivos do backup, passando a utilizar `-6` por padrão para equilibrar desempenho e tamanho final.
+- Ajustamos os logs do script para indicar o nível aplicado durante a compressão com `pigz` ou `gzip`.
+
 ## [0.8.14] - 2025-10-28
 ### Removed
 - Eliminamos estilos legados e variáveis JavaScript não utilizadas para manter os assets do painel mais leves.
