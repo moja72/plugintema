@@ -353,6 +353,13 @@ apply_retention() {
   [[ -z "$cutoff" ]] && return
 
   log "Applying retention (${keep}d)"
+  mapfile -t keep_markers < <(rclone lsf "$REMOTE_TRIM" --files-only --include "*.tar.gz.keep" 2>/dev/null || true)
+  declare -A KEEP_SIDECARS=()
+  for keep_file in "${keep_markers[@]}"; do
+    [[ -z "$keep_file" ]] && continue
+    KEEP_SIDECARS["$keep_file"]=1
+  done
+
   mapfile -t entries < <(rclone lsf "$REMOTE_TRIM" --files-only --format "pt" --separator ";" --include "*.tar.gz" 2>/dev/null || true)
   for entry in "${entries[@]}"; do
     [[ -z "$entry" ]] && continue
@@ -364,9 +371,7 @@ apply_retention() {
     if (( epoch < cutoff )); then
       local keep_sidecar
       keep_sidecar="${file}.keep"
-      local keep_exists
-      keep_exists=$(rclone lsf "$REMOTE_TRIM" --files-only --include "$keep_sidecar" 2>/dev/null || true)
-      if [[ -n "$keep_exists" ]]; then
+      if [[ -n "${KEEP_SIDECARS[$keep_sidecar]:-}" ]]; then
         log "Retention: pulando $file (keep ativo)"
         continue
       fi
