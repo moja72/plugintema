@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.15] - 2025-11-04
+### Changed
+- Carregamos os marcadores `.keep` uma única vez na rotina de retenção do backup, evitando chamadas redundantes ao rclone e mantendo os arquivos protegidos.
+
 ## [0.8.14] - 2025-10-28
 ### Removed
 - Eliminamos estilos legados e variáveis JavaScript não utilizadas para manter os assets do painel mais leves.
