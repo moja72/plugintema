@@ -1128,6 +1128,10 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
         $env .= $name . '=' . escapeshellarg((string)$value) . ' ';
     }
 
+    foreach (ptsb_rclone_backup_env() as $name => $value) {
+        $env .= $name . '=' . escapeshellarg((string) $value) . ' ';
+    }
+
     $chunk = is_array($meta['chunk'] ?? null) ? $meta['chunk'] : [];
     $total = (int)($chunk['total'] ?? 1);
     $index = (int)($chunk['index'] ?? 1);
