@@ -23,6 +23,20 @@ function ptsb_cfg(bool $refresh = false) {
         'drive_url'      => 'https://drive.google.com/drive/u/0/folders/18wIaInN0d0ftKhsi1BndrKmkVuOQkFoO',
         'keep_days_def'  => 12,
 
+        'rclone'         => [
+            'transfers'           => 2,
+            'checkers'            => 4,
+            'retries'             => 5,
+            'retries_sleep'       => '10s',
+            'retries_sleep_max'   => '2m',
+            'low_level_retries'   => 10,
+            'fast_list'           => false,
+            'delta_enabled'       => true,
+            'delta_max_age'       => '168h',
+            'delta_use_update'    => true,
+            'delta_path_template' => '{Y}/{m}',
+        ],
+
         // agendamento
         'tz_string'      => 'America/Sao_Paulo',
         'cron_hook'      => 'ptsb_cron_tick',
@@ -68,8 +82,143 @@ function ptsb_shell_env_prefix(): string {
     return '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
 }
 
+function ptsb_rclone_options(): array {
+    $cfg  = ptsb_cfg();
+    $opts = $cfg['rclone'] ?? [];
+    if (!is_array($opts)) {
+        $opts = [];
+    }
+
+    $defaults = [
+        'transfers'           => 2,
+        'checkers'            => 4,
+        'retries'             => 5,
+        'retries_sleep'       => '10s',
+        'retries_sleep_max'   => '2m',
+        'low_level_retries'   => 10,
+        'fast_list'           => false,
+        'delta_enabled'       => true,
+        'delta_max_age'       => '168h',
+        'delta_use_update'    => true,
+        'delta_path_template' => '{Y}/{m}',
+    ];
+
+    $opts = array_merge($defaults, $opts);
+
+    return apply_filters('ptsb_rclone_options', $opts);
+}
+
+function ptsb_rclone_base_flags(): string {
+    $opts  = ptsb_rclone_options();
+    $flags = [];
+
+    $transfers = max(0, (int)($opts['transfers'] ?? 0));
+    if ($transfers > 0) {
+        $flags[] = '--transfers=' . $transfers;
+    }
+
+    $checkers = max(0, (int)($opts['checkers'] ?? 0));
+    if ($checkers > 0) {
+        $flags[] = '--checkers=' . $checkers;
+    }
+
+    $retries = max(0, (int)($opts['retries'] ?? 0));
+    if ($retries > 0) {
+        $flags[] = '--retries=' . $retries;
+    }
+
+    $lowLevel = max(0, (int)($opts['low_level_retries'] ?? 0));
+    if ($lowLevel > 0) {
+        $flags[] = '--low-level-retries=' . $lowLevel;
+    }
+
+    $sleep = trim((string)($opts['retries_sleep'] ?? ''));
+    if ($sleep !== '') {
+        $flags[] = '--retries-sleep=' . $sleep;
+    }
+
+    $sleepMax = trim((string)($opts['retries_sleep_max'] ?? ''));
+    if ($sleepMax !== '') {
+        $flags[] = '--retries-sleep-max=' . $sleepMax;
+    }
+
+    $flags = apply_filters('ptsb_rclone_base_flags', $flags, $opts);
+
+    return trim(implode(' ', array_filter(array_map('trim', $flags))));
+}
+
+function ptsb_rclone_fast_list_enabled(): bool {
+    $opts    = ptsb_rclone_options();
+    $enabled = !empty($opts['fast_list']);
+    return (bool) apply_filters('ptsb_rclone_use_fast_list', $enabled, $opts);
+}
+
+function ptsb_rclone_fast_list_flag(): string {
+    return ptsb_rclone_fast_list_enabled() ? ' --fast-list' : '';
+}
+
+function ptsb_rclone_delta_config(): array {
+    $opts  = ptsb_rclone_options();
+    $delta = [
+        'enabled'       => !empty($opts['delta_enabled']),
+        'max_age'       => (string)($opts['delta_max_age'] ?? ''),
+        'use_update'    => isset($opts['delta_use_update']) ? (bool)$opts['delta_use_update'] : true,
+        'path_template' => (string)($opts['delta_path_template'] ?? ''),
+    ];
+
+    return apply_filters('ptsb_rclone_delta_config', $delta, $opts);
+}
+
+function ptsb_backup_env_defaults(): array {
+    $opts  = ptsb_rclone_options();
+    $delta = ptsb_rclone_delta_config();
+
+    $env = [];
+
+    $flags = ptsb_rclone_base_flags();
+    if ($flags !== '') {
+        $env['RCLONE_FLAGS'] = $flags;
+    }
+
+    if (isset($opts['transfers'])) {
+        $env['RCLONE_TRANSFERS'] = max(0, (int)$opts['transfers']);
+    }
+    if (isset($opts['checkers'])) {
+        $env['RCLONE_CHECKERS'] = max(0, (int)$opts['checkers']);
+    }
+    if (isset($opts['retries'])) {
+        $env['RCLONE_RETRIES'] = max(0, (int)$opts['retries']);
+    }
+    if (isset($opts['retries_sleep'])) {
+        $env['RCLONE_RETRIES_SLEEP'] = (string)$opts['retries_sleep'];
+    }
+    if (isset($opts['retries_sleep_max'])) {
+        $env['RCLONE_RETRIES_SLEEP_MAX'] = (string)$opts['retries_sleep_max'];
+    }
+    if (isset($opts['low_level_retries'])) {
+        $env['RCLONE_LOW_LEVEL_RETRIES'] = max(0, (int)$opts['low_level_retries']);
+    }
+
+    $env['RCLONE_FAST_LIST'] = ptsb_rclone_fast_list_enabled() ? 1 : 0;
+
+    $env['RCLONE_DELTA_ENABLED'] = !empty($delta['enabled']) ? 1 : 0;
+    if (!empty($delta['max_age'])) {
+        $env['RCLONE_DELTA_MAX_AGE'] = (string)$delta['max_age'];
+    }
+    $env['RCLONE_DELTA_USE_UPDATE'] = !empty($delta['use_update']) ? 1 : 0;
+    if (!empty($delta['path_template'])) {
+        $env['RCLONE_DELTA_PATH_TEMPLATE'] = (string)$delta['path_template'];
+    }
+
+    return apply_filters('ptsb_backup_env_defaults', $env, $opts, $delta);
+}
+
 function ptsb_rclone_command(string $command): string {
     $command = ltrim($command);
+    $flags   = ptsb_rclone_base_flags();
+    if ($flags !== '') {
+        $command = $flags . ' ' . $command;
+    }
     return ptsb_shell_env_prefix() . ' rclone ' . $command;
 }
 

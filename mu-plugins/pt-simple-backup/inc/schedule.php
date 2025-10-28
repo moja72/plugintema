@@ -1120,7 +1120,9 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
          . 'KEEP_FOREVER='   . escapeshellarg($keepForever ? 1 : 0) . ' '
          . 'PARTS='          . escapeshellarg($partsCsv)          . ' ';
 
-    foreach ($extraEnv as $key => $value) {
+    $envVars = array_merge(ptsb_backup_env_defaults(), $extraEnv);
+
+    foreach ($envVars as $key => $value) {
         $name = strtoupper(preg_replace('/[^A-Z0-9_]/i', '_', (string)$key));
         if ($name === '' || $name === 'PARTS' || $name === 'KEEP' || $name === 'KEEP_DAYS') {
             continue;
