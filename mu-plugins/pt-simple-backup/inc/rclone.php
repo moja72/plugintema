@@ -188,6 +188,7 @@ function ptsb_drive_info(bool $force_refresh = false): array {
 
     $remote   = $cfg['remote'];
     $rem_name = rtrim($remote, ':');
+    $rem_with_colon = $rem_name !== '' ? $rem_name . ':' : $remote;
 
     $config_remote_name = '';
     $config_remote_with_colon = '';
