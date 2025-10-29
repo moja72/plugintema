@@ -1085,10 +1085,14 @@ add_action('ptsb_cron_tick', function(){
 
     ptsb_chunk_plan_watchdog();
 
- $cycles = ptsb_cycles_get();
-if (!$cycles) {
-    return; // Sem rotinas = nada a fazer (desliga o legado)
-}
+    $planState = ptsb_chunk_plan_get();
+    $planActive = !empty($planState['active']) && (!empty($planState['current']) || !empty($planState['queue']));
+    $withinWindow = ptsb_is_within_maintenance_window($now);
+
+    $cycles = ptsb_cycles_get();
+    if (!$cycles) {
+        return; // Sem rotinas = nada a fazer (desliga o legado)
+    }
 
 
     // ====== NOVA ENGINE: rotinas ======
@@ -1099,7 +1103,7 @@ if (!$cycles) {
     ptsb_skipmap_gc();
     $skipmap = ptsb_skipmap_get();
 
-    if (!ptsb_is_within_maintenance_window($now)) {
+    if (!$planActive && !$withinWindow) {
         if (!empty($state['queued']['time'])) {
             $reason = (string) ($state['queued']['reason'] ?? '');
             if ($reason !== 'window') {
@@ -1111,6 +1115,15 @@ if (!$cycles) {
 
         $label = ptsb_maintenance_window_label();
         ptsb_log_throttle('maintenance_window_block', 'Execuções automáticas pausadas fora da janela de manutenção ' . $label . ' (BRT).', 900);
+        return;
+    }
+
+    if (!$withinWindow) {
+        ptsb_chunk_plan_schedule_next();
+        if (!get_transient('ptsb_chunk_retry_window_notice')) {
+            set_transient('ptsb_chunk_retry_window_notice', 1, 300);
+            ptsb_log('[chunk] Janela de manutenção ativa; mantendo fila atual em modo de reprocessamento.');
+        }
         return;
     }
 
@@ -1368,6 +1381,8 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
          . 'RETENTION_DAYS=' . escapeshellarg($keepDays)          . ' '
          . 'RETENTION='      . escapeshellarg($keepDays)          . ' '
          . 'KEEP_FOREVER='   . escapeshellarg($keepForever ? 1 : 0) . ' '
+         . 'LOCK_FILE='      . escapeshellarg((string)($cfg['lock'] ?? '')) . ' '
+         . 'LOCK_TOKEN='     . escapeshellarg($token)             . ' '
          . 'PARTS='          . escapeshellarg($partsCsv)          . ' ';
 
     foreach ($extraEnv as $key => $value) {

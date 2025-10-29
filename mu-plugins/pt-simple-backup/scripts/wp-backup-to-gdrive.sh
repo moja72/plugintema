@@ -27,6 +27,11 @@ PTSB_CPU_S_START=0
 PTSB_CPU_CU_START=0
 PTSB_CPU_CS_START=0
 
+LOCK_FILE="${LOCK_FILE:-}"
+LOCK_TOKEN="${LOCK_TOKEN:-}"
+LOCK_FILE_CLAIMED=0
+LOCK_FILE_WARNED=0
+
 if [[ -r "/proc/$$/stat" ]]; then
   read -r PTSB_CPU_U_START PTSB_CPU_S_START PTSB_CPU_CU_START PTSB_CPU_CS_START < <(awk '{print $14" "$15" "$16" "$17}' "/proc/$$/stat") || true
 fi
@@ -127,16 +132,6 @@ rclone_copyto_single() {
   if (( suppress_filters )); then
     log "RCLONE_FILTER detectado; removendo filtros para upload de arquivo único."
 
-    if command -v env >/dev/null 2>&1; then
-      local -a cmd=(env)
-      [[ -n "${RCLONE_FILTER:-}" ]] && cmd+=(-u RCLONE_FILTER)
-      [[ -n "${RCLONE_FILTER_FROM:-}" ]] && cmd+=(-u RCLONE_FILTER_FROM)
-      [[ -n "${RCLONE_FILTER_FILE:-}" ]] && cmd+=(-u RCLONE_FILTER_FILE)
-      cmd+=(rclone)
-      "${cmd[@]}" copyto "$src" "$dest"
-      return $?
-    fi
-
     local restore_filter=0
     local restore_filter_from=0
     local restore_filter_file=0
@@ -182,6 +177,70 @@ rclone_copyto_single() {
   rclone copyto "$src" "$dest"
 }
 
+lock_file_release() {
+  [[ -z "$LOCK_FILE" ]] && return
+
+  if [[ -f "$LOCK_FILE" ]]; then
+    if [[ -n "$LOCK_TOKEN" ]]; then
+      local file_token=""
+      IFS=':' read -r file_token _ <"$LOCK_FILE" 2>/dev/null || true
+      if [[ -z "$file_token" || "$file_token" == "$LOCK_TOKEN" ]]; then
+        rm -f "$LOCK_FILE"
+      fi
+    else
+      rm -f "$LOCK_FILE"
+    fi
+  fi
+
+  LOCK_FILE_CLAIMED=0
+}
+
+lock_file_write() {
+  local mode="$1"
+  [[ -z "$LOCK_FILE" ]] && return
+
+  local dir
+  dir="$(dirname "$LOCK_FILE")"
+  if [[ ! -d "$dir" ]]; then
+    mkdir -p "$dir" 2>/dev/null || true
+  fi
+
+  local now
+  now="$(date +%s)"
+  local payload
+  if [[ -n "$LOCK_TOKEN" ]]; then
+    payload="${LOCK_TOKEN}:$$:${now}"
+  else
+    payload="$$:${now}"
+  fi
+
+  if printf '%s\n' "$payload" >"$LOCK_FILE"; then
+    LOCK_FILE_CLAIMED=1
+    [[ "$mode" != 'suppress' ]] && LOCK_FILE_WARNED=0
+    chmod 600 "$LOCK_FILE" 2>/dev/null || true
+  else
+    if [[ "$mode" != 'suppress' && $LOCK_FILE_WARNED -eq 0 ]]; then
+      LOCK_FILE_WARNED=1
+      log "WARN: não foi possível gravar lock em $LOCK_FILE"
+    fi
+  fi
+}
+
+lock_file_claim() {
+  lock_file_write ""
+}
+
+lock_file_refresh() {
+  if [[ -z "$LOCK_FILE" ]]; then
+    return
+  fi
+  if [[ $LOCK_FILE_CLAIMED -ne 1 ]]; then
+    lock_file_write ""
+  else
+    lock_file_write "suppress"
+  fi
+}
+
 cleanup() {
   if [[ ${PTSB_METRICS_SUCCESS:-0} -eq 1 ]]; then
     metrics_emit_summary
@@ -189,6 +248,7 @@ cleanup() {
   if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR:-}" ]]; then
     rm -rf "$WORK_DIR"
   fi
+  lock_file_release
 }
 
 trap cleanup EXIT
@@ -230,6 +290,7 @@ command -v rclone >/dev/null 2>&1 || fail "rclone não encontrado"
 command -v tar >/dev/null 2>&1 || fail "tar não encontrado"
 
 WORK_DIR="$(mktemp -d /tmp/ptsb.XXXXXX)"
+lock_file_claim
 SQL_FILE=""
 SQL_LABEL="database.sql"
 
@@ -303,6 +364,7 @@ PHP
     SQL_LABEL="database.sql.gz"
   fi
   metrics_step_end "compress_db"
+  lock_file_refresh
 fi
 
 # Monta lista de itens para o TAR
@@ -372,6 +434,7 @@ log "Creating final bundle"
 metrics_step_begin "archive_bundle"
 tar -cf "$BUNDLE_TAR" "${TAR_ITEMS[@]}"
 metrics_step_end "archive_bundle"
+lock_file_refresh
 
 metrics_step_begin "compress_bundle"
 if command -v pigz >/dev/null 2>&1; then
@@ -382,6 +445,7 @@ else
   gzip "$COMPRESSION_LEVEL_FLAG" "$BUNDLE_TAR"
 fi
 metrics_step_end "compress_bundle"
+lock_file_refresh
 
 if [[ -f "$BUNDLE_GZ" ]]; then
   PTSB_METRICS_BYTES=$(stat -c%s "$BUNDLE_GZ" 2>/dev/null || echo 0)
@@ -395,10 +459,15 @@ else
   REMOTE_TARGET="${REMOTE_TRIM}/${BASE_NAME}.tar.gz"
 fi
 
+lock_file_refresh
 log "Uploading to $REMOTE_TARGET"
 metrics_step_begin "upload"
-rclone_copyto_single "$BUNDLE_GZ" "$REMOTE_TARGET"
+if ! rclone_copyto_single "$BUNDLE_GZ" "$REMOTE_TARGET"; then
+  metrics_step_end "upload"
+  fail "Falha ao enviar arquivo final via rclone (copyto)."
+fi
 metrics_step_end "upload"
+lock_file_refresh
 
 log "Uploaded and removing local bundle"
 rm -f "$BUNDLE_GZ"
@@ -460,6 +529,7 @@ apply_retention() {
 metrics_step_begin "retention"
 apply_retention "${KEEP_DAYS:-0}" "$KEEP_FOREVER"
 metrics_step_end "retention"
+lock_file_refresh
 
 log "Backup finished successfully."
 PTSB_METRICS_SUCCESS=1

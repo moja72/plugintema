@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.19] - 2025-10-30
+### Fixed
+- Criamos e limpamos o arquivo de lock diretamente no script de backup, propagando o token do processo e garantindo liberação em
+  caso de falha para eliminar travamentos prolongados do job.
+- Reforçamos a checagem de compatibilidade dos scripts externos e limpamos variáveis `RCLONE_FILTER*` antes de chamar comandos
+  internos do rclone, evitando erros de upload e de leitura de quota.
+- Mantemos a fila de chunks ativa mesmo fora da janela de manutenção quando há retentativas pendentes, registrando o motivo no
+  log sem bloquear novas execuções necessárias.
+- Interrompemos o fluxo com uma mensagem explícita quando o `rclone copyto` falha, facilitando o diagnóstico pelo watchdog de
+  chunks.
+
 ## [0.8.18] - 2025-10-29
 ### Fixed
 - Exportamos as variáveis `RCLONE_FILTER*` apenas quando o script de backup suporta limpar os filtros para uploads individuais,

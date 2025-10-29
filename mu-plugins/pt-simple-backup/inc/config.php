@@ -109,8 +109,12 @@ function ptsb_script_supports_rclone_filters(): bool {
 
     if (@is_readable($script)) {
         $contents = @file_get_contents($script);
-        if (is_string($contents) && strpos($contents, 'rclone_copyto_single') !== false) {
-            $supports = true;
+        if (is_string($contents)) {
+            $hasHelper = strpos($contents, 'rclone_copyto_single') !== false;
+            $cleansFilters = strpos($contents, 'RCLONE_FILTER detectado') !== false;
+            if ($hasHelper && $cleansFilters) {
+                $supports = true;
+            }
         }
     }
 
@@ -292,7 +296,8 @@ function ptsb_shell_command_exists(string $command): bool {
 
 function ptsb_rclone_command(string $command): string {
     $command = ltrim($command);
-    return ptsb_shell_env_prefix() . ' rclone ' . $command;
+    $prefix  = ptsb_shell_env_prefix();
+    return 'unset RCLONE_FILTER RCLONE_FILTER_FROM RCLONE_FILTER_FILE; ' . $prefix . ' rclone ' . $command;
 }
 
 function ptsb_rclone_exec(string $command)
@@ -398,10 +403,19 @@ function ptsb_lock_info(): array {
 
     $mtime = $hasFile ? (int) @filemtime($lockPath) : 0;
     if ($mtime && ($ttl <= 0 || (time() - $mtime) <= $ttl)) {
+        $fileToken = '';
+        if (@is_readable($lockPath)) {
+            $raw = trim((string) @file_get_contents($lockPath));
+            if ($raw !== '') {
+                $parts = explode(':', $raw, 2);
+                $fileToken = trim((string) ($parts[0] ?? ''));
+            }
+        }
+
         return [
             'pid'       => (int)($info['pid'] ?? 0),
             'timestamp' => $mtime,
-            'token'     => (string)($info['token'] ?? ''),
+            'token'     => ($fileToken !== '') ? $fileToken : (string)($info['token'] ?? ''),
             'source'    => 'file',
         ];
     }
@@ -425,6 +439,27 @@ function ptsb_lock_release(?string $token = null): void {
             return;
         }
     }
+
+    $cfg      = ptsb_cfg();
+    $lockPath = (string)($cfg['lock'] ?? '');
+    if ($lockPath !== '') {
+        if ($token !== null && $token !== '') {
+            if (@is_readable($lockPath)) {
+                $raw = trim((string) @file_get_contents($lockPath));
+                $fileToken = '';
+                if ($raw !== '') {
+                    $parts = explode(':', $raw, 2);
+                    $fileToken = trim((string) ($parts[0] ?? ''));
+                }
+                if ($fileToken === '' || $fileToken === $token) {
+                    @unlink($lockPath);
+                }
+            }
+        } else {
+            @unlink($lockPath);
+        }
+    }
+
     delete_option($ownerKey);
     delete_transient(ptsb_lock_key());
     delete_option(ptsb_lock_key());
@@ -440,6 +475,12 @@ function ptsb_lock_touch(string $token, array $extra = []): void {
     $payload['token']     = $token;
     $payload['timestamp'] = time();
     ptsb_lock_store($payload);
+
+    $cfg      = ptsb_cfg();
+    $lockPath = (string)($cfg['lock'] ?? '');
+    if ($lockPath !== '' && @file_exists($lockPath)) {
+        @touch($lockPath);
+    }
 }
 
 function ptsb_lock_try_acquire(int $attempts = 4, ?int $ttl = null): ?array {
