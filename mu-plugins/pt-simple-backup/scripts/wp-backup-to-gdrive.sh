@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # PTSB_FILTER_SUPPORT=1
 set -euo pipefail
+set -o errtrace
+
+# PTSB_RCLONE_FILTER_SUPPORT=1
 
 log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -128,60 +131,26 @@ rclone_copyto_single() {
   if (( suppress_filters )); then
     log "RCLONE_FILTER detectado; removendo filtros para upload de arquivo único."
 
-    if command -v env >/dev/null 2>&1; then
-      local -a cmd=(env)
-      [[ -n "${RCLONE_FILTER:-}" ]] && cmd+=(-u RCLONE_FILTER)
-      [[ -n "${RCLONE_FILTER_FROM:-}" ]] && cmd+=(-u RCLONE_FILTER_FROM)
-      [[ -n "${RCLONE_FILTER_FILE:-}" ]] && cmd+=(-u RCLONE_FILTER_FILE)
-      cmd+=(rclone)
-      "${cmd[@]}" copyto "$src" "$dest"
-      return $?
-    fi
-
-    local restore_filter=0
-    local restore_filter_from=0
-    local restore_filter_file=0
-    local prev_filter=""
-    local prev_filter_from=""
-    local prev_filter_file=""
-
-    if [[ -v RCLONE_FILTER ]]; then
-      restore_filter=1
-      prev_filter="$RCLONE_FILTER"
+    (
       unset RCLONE_FILTER
-    fi
-    if [[ -v RCLONE_FILTER_FROM ]]; then
-      restore_filter_from=1
-      prev_filter_from="$RCLONE_FILTER_FROM"
       unset RCLONE_FILTER_FROM
-    fi
-    if [[ -v RCLONE_FILTER_FILE ]]; then
-      restore_filter_file=1
-      prev_filter_file="$RCLONE_FILTER_FILE"
       unset RCLONE_FILTER_FILE
-    fi
-
-    rclone copyto "$src" "$dest"
-    local rc=$?
-
-    if (( restore_filter )); then
-      RCLONE_FILTER="$prev_filter"
-      export RCLONE_FILTER
-    fi
-    if (( restore_filter_from )); then
-      RCLONE_FILTER_FROM="$prev_filter_from"
-      export RCLONE_FILTER_FROM
-    fi
-    if (( restore_filter_file )); then
-      RCLONE_FILTER_FILE="$prev_filter_file"
-      export RCLONE_FILTER_FILE
-    fi
-
-    return $rc
+      rclone copyto "$src" "$dest"
+    )
+    return $?
   fi
 
   rclone copyto "$src" "$dest"
 }
+
+on_error() {
+  local exit_code="$1"
+  local cmd="$2"
+  [[ -z "$cmd" ]] && cmd="comando desconhecido"
+  log "ERROR: falha executando '${cmd}' (código ${exit_code})."
+}
+
+trap 'on_error $? "${BASH_COMMAND:-}"' ERR
 
 cleanup() {
   if [[ ${PTSB_METRICS_SUCCESS:-0} -eq 1 ]]; then
