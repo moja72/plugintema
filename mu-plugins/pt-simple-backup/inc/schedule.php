@@ -235,6 +235,28 @@ function ptsb_manual_job_is_active(array $job): bool {
     return in_array($status, ['pending','waiting_lock','running'], true);
 }
 
+function ptsb_manual_job_requires_cron(?array $job = null): bool {
+    $job = $job ?? ptsb_manual_job_get();
+    if (empty($job['id'])) {
+        return false;
+    }
+
+    $status = (string)($job['status'] ?? 'idle');
+    return in_array($status, ['pending', 'waiting_lock', 'running'], true);
+}
+
+function ptsb_cron_schedule_tick_if_late(int $delay = 60): void {
+    $delay = max(5, (int) $delay);
+    $cfg   = ptsb_cfg();
+    $hook  = (string) ($cfg['cron_hook'] ?? 'ptsb_cron_tick');
+    $when  = time() + $delay;
+
+    $next = wp_next_scheduled($hook);
+    if (!$next || $next > $when) {
+        wp_schedule_single_event($when, $hook);
+    }
+}
+
 function ptsb_manual_job_message(array $job): string {
     $msg = (string)($job['message'] ?? '');
     if ($msg !== '') {
@@ -331,6 +353,65 @@ function ptsb_manual_job_mark_failed(string $message): void {
     $job['message']     = $message;
     $job['finished_at'] = time();
     ptsb_manual_job_save($job);
+}
+
+function ptsb_manual_job_tick(): bool {
+    $job = ptsb_manual_job_get();
+    if (!ptsb_manual_job_requires_cron($job)) {
+        return false;
+    }
+
+    if (!ptsb_can_shell()) {
+        ptsb_manual_job_mark_failed('Não foi possível iniciar o backup (shell_exec indisponível).');
+        return false;
+    }
+
+    if (ptsb_lock_is_active()) {
+        $job['status']   = 'waiting_lock';
+        $job['message']  = 'Aguardando outro backup finalizar para iniciar.';
+        $job['attempts'] = (int) $job['attempts'] + 1;
+        ptsb_manual_job_save($job);
+        ptsb_cron_schedule_tick_if_late(30);
+        return true;
+    }
+
+    if ((string) ($job['status'] ?? '') === 'running') {
+        ptsb_cron_schedule_tick_if_late(60);
+        return true;
+    }
+
+    $payload        = is_array($job['payload']) ? $job['payload'] : [];
+    $partsCsv       = $payload['parts_csv'] ?? null;
+    $overridePrefix = $payload['prefix'] ?? null;
+    $keepDays       = $payload['keep_days'] ?? null;
+    $keepForever    = !empty($payload['keep_forever']);
+    $effectivePref  = $payload['effective_prefix'] ?? ($overridePrefix ?: ptsb_cfg()['prefix']);
+
+    if ($keepForever) {
+        ptsb_plan_mark_keep_next($effectivePref);
+    }
+
+    $job['status']     = 'running';
+    $job['message']    = 'Backup em execução. Acompanhe o progresso abaixo.';
+    $job['started_at'] = time();
+    $job['attempts']   = (int) $job['attempts'] + 1;
+    ptsb_manual_job_save($job);
+
+    $intent = [
+        'prefix'       => $effectivePref,
+        'keep_days'    => ($keepDays === null) ? (int) ptsb_settings()['keep_days'] : (int) $keepDays,
+        'keep_forever' => $keepForever ? 1 : 0,
+        'origin'       => 'manual',
+        'started_at'   => time(),
+        'job_id'       => (string) $job['id'],
+    ];
+    update_option('ptsb_last_run_intent', $intent, false);
+
+    ptsb_start_backup($partsCsv, $overridePrefix, $keepDays);
+
+    ptsb_cron_schedule_tick_if_late(60);
+
+    return true;
 }
 
 function ptsb_uuid4(){
@@ -434,6 +515,23 @@ function ptsb_chunk_plan_get(): array {
     }
 
     return $plan;
+}
+
+function ptsb_chunk_plan_has_pending_work(): bool {
+    $plan = ptsb_chunk_plan_get();
+    if (empty($plan['active'])) {
+        return false;
+    }
+
+    if (!empty($plan['current'])) {
+        return true;
+    }
+
+    if (!empty($plan['queue'])) {
+        return true;
+    }
+
+    return false;
 }
 
 function ptsb_chunk_plan_save(array $plan): void {
@@ -634,6 +732,8 @@ function ptsb_chunk_plan_mark_failure(string $message, array $opts = []): void {
         return;
     }
 
+    ptsb_lock_release();
+
     $current = ptsb_chunk_plan_entry_normalize((array) $plan['current']);
     $plan['current'] = null;
 
@@ -722,6 +822,9 @@ function ptsb_chunk_plan_watchdog(): void {
 
 function ptsb_chunk_plan_complete(string $file): array {
     $plan = ptsb_chunk_plan_get();
+
+    ptsb_lock_release();
+
     if (empty($plan['active'])) {
         ptsb_chunk_plan_reset();
         return ['final' => true, 'meta' => []];
@@ -1013,7 +1116,7 @@ add_filter('cron_schedules', function($s){
 });
 add_action('init', function(){
     $cfg  = ptsb_cfg();
-    $hook = $cfg['cron_hook'];
+    $hook = (string) ($cfg['cron_hook'] ?? 'ptsb_cron_tick');
 
     $auto_enabled = !empty(ptsb_auto_get()['enabled']);
     $has_enabled_cycle = false;
@@ -1025,12 +1128,11 @@ add_action('init', function(){
 
     if ($auto_enabled || $has_enabled_cycle || $manual_active) {
         if (!wp_next_scheduled($hook)) {
-            wp_schedule_event(time()+30, $cfg['cron_sched'], $hook);
+            wp_schedule_event(time() + 30, $cfg['cron_sched'], $hook);
         }
-    } else {
+    } elseif (!ptsb_manual_job_requires_cron() && !ptsb_chunk_plan_is_active()) {
         wp_clear_scheduled_hook($hook);
     }
-});
 
 
 add_action('ptsb_cron_tick', 'ptsb_manual_job_handle_via_cron', 1);
@@ -1096,6 +1198,7 @@ function ptsb_manual_job_handle_via_cron(): void {
     }
 }
 
+
 add_action('ptsb_cron_tick', function(){
     $cfg  = ptsb_cfg();
     $now  = ptsb_now_brt();
@@ -1104,11 +1207,14 @@ add_action('ptsb_cron_tick', function(){
 
     ptsb_chunk_plan_watchdog();
 
- $cycles = ptsb_cycles_get();
-if (!$cycles) {
-    return; // Sem rotinas = nada a fazer (desliga o legado)
-}
+    if (ptsb_manual_job_tick()) {
+        return;
+    }
 
+    $cycles = ptsb_cycles_get();
+    if (!$cycles) {
+        return; // Sem rotinas = nada a fazer (desliga o legado)
+    }
 
     // ====== NOVA ENGINE: rotinas ======
     $g           = ptsb_cycles_global_get();
@@ -1411,6 +1517,10 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
          . 'RETENTION='      . escapeshellarg($keepDays)          . ' '
          . 'KEEP_FOREVER='   . escapeshellarg($keepForever ? 1 : 0) . ' '
          . 'PARTS='          . escapeshellarg($partsCsv)          . ' ';
+
+    if (!empty($cfg['lock'])) {
+        $env .= 'PTSB_LOCK_FILE=' . escapeshellarg((string) $cfg['lock']) . ' ';
+    }
 
     foreach ($extraEnv as $key => $value) {
         $name = strtoupper(preg_replace('/[^A-Z0-9_]/i', '_', (string)$key));
