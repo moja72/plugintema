@@ -226,28 +226,6 @@ function ptsb_manual_job_is_active(array $job): bool {
     return in_array($status, ['pending','waiting_lock','running'], true);
 }
 
-function ptsb_manual_job_requires_cron(?array $job = null): bool {
-    $job = $job ?? ptsb_manual_job_get();
-    if (empty($job['id'])) {
-        return false;
-    }
-
-    $status = (string)($job['status'] ?? 'idle');
-    return in_array($status, ['pending', 'waiting_lock', 'running'], true);
-}
-
-function ptsb_cron_schedule_tick_if_late(int $delay = 60): void {
-    $delay = max(5, (int) $delay);
-    $cfg   = ptsb_cfg();
-    $hook  = (string) ($cfg['cron_hook'] ?? 'ptsb_cron_tick');
-    $when  = time() + $delay;
-
-    $next = wp_next_scheduled($hook);
-    if (!$next || $next > $when) {
-        wp_schedule_single_event($when, $hook);
-    }
-}
-
 function ptsb_manual_job_message(array $job): string {
     $msg = (string)($job['message'] ?? '');
     if ($msg !== '') {
@@ -344,65 +322,6 @@ function ptsb_manual_job_mark_failed(string $message): void {
     $job['message']     = $message;
     $job['finished_at'] = time();
     ptsb_manual_job_save($job);
-}
-
-function ptsb_manual_job_tick(): bool {
-    $job = ptsb_manual_job_get();
-    if (!ptsb_manual_job_requires_cron($job)) {
-        return false;
-    }
-
-    if (!ptsb_can_shell()) {
-        ptsb_manual_job_mark_failed('Não foi possível iniciar o backup (shell_exec indisponível).');
-        return false;
-    }
-
-    if (ptsb_lock_is_active()) {
-        $job['status']   = 'waiting_lock';
-        $job['message']  = 'Aguardando outro backup finalizar para iniciar.';
-        $job['attempts'] = (int) $job['attempts'] + 1;
-        ptsb_manual_job_save($job);
-        ptsb_cron_schedule_tick_if_late(30);
-        return true;
-    }
-
-    if ((string) ($job['status'] ?? '') === 'running') {
-        ptsb_cron_schedule_tick_if_late(60);
-        return true;
-    }
-
-    $payload        = is_array($job['payload']) ? $job['payload'] : [];
-    $partsCsv       = $payload['parts_csv'] ?? null;
-    $overridePrefix = $payload['prefix'] ?? null;
-    $keepDays       = $payload['keep_days'] ?? null;
-    $keepForever    = !empty($payload['keep_forever']);
-    $effectivePref  = $payload['effective_prefix'] ?? ($overridePrefix ?: ptsb_cfg()['prefix']);
-
-    if ($keepForever) {
-        ptsb_plan_mark_keep_next($effectivePref);
-    }
-
-    $job['status']     = 'running';
-    $job['message']    = 'Backup em execução. Acompanhe o progresso abaixo.';
-    $job['started_at'] = time();
-    $job['attempts']   = (int) $job['attempts'] + 1;
-    ptsb_manual_job_save($job);
-
-    $intent = [
-        'prefix'       => $effectivePref,
-        'keep_days'    => ($keepDays === null) ? (int) ptsb_settings()['keep_days'] : (int) $keepDays,
-        'keep_forever' => $keepForever ? 1 : 0,
-        'origin'       => 'manual',
-        'started_at'   => time(),
-        'job_id'       => (string) $job['id'],
-    ];
-    update_option('ptsb_last_run_intent', $intent, false);
-
-    ptsb_start_backup($partsCsv, $overridePrefix, $keepDays);
-
-    ptsb_cron_schedule_tick_if_late(60);
-
-    return true;
 }
 
 function ptsb_uuid4(){
@@ -527,11 +446,6 @@ function ptsb_chunk_plan_has_pending_work(): bool {
 
 function ptsb_chunk_plan_save(array $plan): void {
     update_option(ptsb_chunk_plan_key(), $plan, false);
-}
-
-function ptsb_chunk_plan_is_active(): bool {
-    $plan = ptsb_chunk_plan_get();
-    return !empty($plan['active']);
 }
 
 function ptsb_chunk_plan_reset(): void {
@@ -1107,7 +1021,7 @@ add_filter('cron_schedules', function($s){
 });
 add_action('init', function(){
     $cfg  = ptsb_cfg();
-    $hook = (string) ($cfg['cron_hook'] ?? 'ptsb_cron_tick');
+    $hook = $cfg['cron_hook'];
 
     $auto_enabled = !empty(ptsb_auto_get()['enabled']);
     $has_enabled_cycle = false;
@@ -1117,17 +1031,73 @@ add_action('init', function(){
 
     if ($auto_enabled || $has_enabled_cycle) {
         if (!wp_next_scheduled($hook)) {
-            wp_schedule_event(time() + 30, $cfg['cron_sched'], $hook);
+            wp_schedule_event(time()+30, $cfg['cron_sched'], $hook);
         }
-    } elseif (!ptsb_manual_job_requires_cron() && !ptsb_chunk_plan_is_active()) {
+    } else {
         wp_clear_scheduled_hook($hook);
-    }
-
-    if (ptsb_manual_job_requires_cron() || ptsb_chunk_plan_is_active()) {
-        ptsb_cron_schedule_tick_if_late(10);
     }
 });
 
+
+add_action('ptsb_run_manual_backup', function($job_id){
+    $job = ptsb_manual_job_get();
+    if ($job['id'] === '' || (string)$job_id !== (string)$job['id']) {
+        return;
+    }
+
+    $status = (string)$job['status'];
+    if (!in_array($status, ['pending','waiting_lock'], true)) {
+        return;
+    }
+
+    $cfg = ptsb_cfg();
+
+    if (!ptsb_can_shell()) {
+        $job['status']      = 'failed';
+        $job['message']     = 'Não foi possível iniciar o backup (shell_exec indisponível).';
+        $job['finished_at'] = time();
+        ptsb_manual_job_save($job);
+        return;
+    }
+
+    if (file_exists($cfg['lock'])) {
+        $job['status']   = 'waiting_lock';
+        $job['message']  = 'Aguardando outro backup finalizar para iniciar.';
+        $job['attempts'] = (int)$job['attempts'] + 1;
+        ptsb_manual_job_save($job);
+        wp_schedule_single_event(time()+30, 'ptsb_run_manual_backup', [(string)$job['id']]);
+        return;
+    }
+
+    $payload        = is_array($job['payload']) ? $job['payload'] : [];
+    $partsCsv       = $payload['parts_csv'] ?? null;
+    $overridePrefix = $payload['prefix'] ?? null;
+    $keepDays       = $payload['keep_days'] ?? null;
+    $keepForever    = !empty($payload['keep_forever']);
+    $effectivePref  = $payload['effective_prefix'] ?? ($overridePrefix ?: ptsb_cfg()['prefix']);
+
+    if ($keepForever) {
+        ptsb_plan_mark_keep_next($effectivePref);
+    }
+
+    $job['status']     = 'running';
+    $job['message']    = 'Backup em execução. Acompanhe o progresso abaixo.';
+    $job['started_at'] = time();
+    $job['attempts']   = (int)$job['attempts'] + 1;
+    ptsb_manual_job_save($job);
+
+    $intent = [
+        'prefix'       => $effectivePref,
+        'keep_days'    => ($keepDays === null) ? (int)ptsb_settings()['keep_days'] : (int)$keepDays,
+        'keep_forever' => $keepForever ? 1 : 0,
+        'origin'       => 'manual',
+        'started_at'   => time(),
+        'job_id'       => (string)$job['id'],
+    ];
+    update_option('ptsb_last_run_intent', $intent, false);
+
+    ptsb_start_backup($partsCsv, $overridePrefix, $keepDays);
+});
 
 add_action('ptsb_cron_tick', function(){
     $cfg  = ptsb_cfg();
@@ -1137,27 +1107,22 @@ add_action('ptsb_cron_tick', function(){
 
     ptsb_chunk_plan_watchdog();
 
-    if (ptsb_manual_job_tick()) {
-        return;
-    }
+ $cycles = ptsb_cycles_get();
+if (!$cycles) {
+    return; // Sem rotinas = nada a fazer (desliga o legado)
+}
 
-    $cycles = ptsb_cycles_get();
-    if (!$cycles) {
-        return; // Sem rotinas = nada a fazer (desliga o legado)
-    }
 
     // ====== NOVA ENGINE: rotinas ======
-    $g           = ptsb_cycles_global_get();
-    $state       = ptsb_cycles_state_get();
-    $running     = ptsb_lock_is_active();
-    $chunkActive = ptsb_chunk_plan_is_active();
+    $g       = ptsb_cycles_global_get();
+    $state   = ptsb_cycles_state_get();
+    $running = ptsb_lock_is_active();
     // carregar/limpar mapa de execuções a ignorar
     ptsb_skipmap_gc();
     $skipmap = ptsb_skipmap_get();
 
     $withinWindow = ptsb_is_within_maintenance_window($now);
-
-    if (!$withinWindow && !$chunkActive) {
+    if (!$withinWindow && !ptsb_chunk_plan_has_pending_work()) {
         if (!empty($state['queued']['time'])) {
             $reason = (string) ($state['queued']['reason'] ?? '');
             if ($reason !== 'window') {
@@ -1172,16 +1137,7 @@ add_action('ptsb_cron_tick', function(){
         return;
     }
 
-    if (!$withinWindow && $chunkActive) {
-        if (!empty($state['queued']['time'])) {
-            $state['queued']['reason']    = 'window';
-            $state['queued']['queued_at'] = $state['queued']['queued_at'] ?: time();
-            ptsb_cycles_state_save($state);
-        }
-        return;
-    }
-
-    if (!empty($state['queued']['time']) && ($state['queued']['reason'] ?? '') === 'window') {
+    if (!empty($state['queued']['time']) && ($state['queued']['reason'] ?? '') === 'window' && $withinWindow) {
         $state['queued']['reason'] = '';
         ptsb_cycles_state_save($state);
     }
@@ -1419,17 +1375,6 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
     $cfg   = ptsb_cfg();
     $lock  = ptsb_lock_try_acquire();
     if (!$lock) {
-        return false;
-    }
-
-    if (!ptsb_rclone_remote_preflight()) {
-        ptsb_log('Backup abortado: falha ao validar o remoto do rclone.');
-        $token = (string)($lock['token'] ?? '');
-        if ($token !== '') {
-            ptsb_lock_release($token);
-        } else {
-            ptsb_lock_release();
-        }
         return false;
     }
 

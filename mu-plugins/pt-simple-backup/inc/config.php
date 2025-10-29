@@ -102,11 +102,14 @@ function ptsb_script_supports_rclone_filters(): bool {
 
     $supports = ($scriptReal && $bundledReal && $scriptReal === $bundledReal);
 
-    if (@is_readable($script)) {
-        $contents = @file_get_contents($script);
-        $marker = 'PTSB_RCLONE_FILTER_SUPPORT=1';
-        if (is_string($contents) && strpos($contents, $marker) !== false) {
-            $supports = true;
+    if (!$supports && @is_readable($script)) {
+        $snippet = @file_get_contents($script, false, null, 0, 4096);
+        if (is_string($snippet)) {
+            if (strpos($snippet, 'PTSB_FILTER_SUPPORT=1') !== false) {
+                $supports = true;
+            } elseif (preg_match('/function\s+rclone_copyto_single\s*\(/', $snippet)) {
+                $supports = true;
+            }
         }
     }
 
@@ -293,43 +296,9 @@ function ptsb_rclone_command(string $command): string {
     return ptsb_shell_env_prefix() . ' rclone ' . $command;
 }
 
-function ptsb_rclone_exec_with_status(string $command): array {
-    $cmd = ptsb_rclone_command($command);
-    $descriptor = [
-        0 => ['pipe', 'r'],
-        1 => ['pipe', 'w'],
-        2 => ['pipe', 'w'],
-    ];
-
-    $proc = proc_open($cmd, $descriptor, $pipes);
-    if (!is_resource($proc)) {
-        return ['stdout' => '', 'stderr' => '', 'exit_code' => 1];
-    }
-
-    fclose($pipes[0]);
-    $stdout = stream_get_contents($pipes[1]);
-    fclose($pipes[1]);
-
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[2]);
-
-    $exitCode = proc_close($proc);
-
-    return [
-        'stdout'    => is_string($stdout) ? $stdout : '',
-        'stderr'    => is_string($stderr) ? $stderr : '',
-        'exit_code' => is_int($exitCode) ? $exitCode : (int) $exitCode,
-    ];
-}
-
 function ptsb_rclone_exec(string $command)
 {
-    $result = ptsb_rclone_exec_with_status($command);
-    if ($result['stdout'] === '' && (int) $result['exit_code'] !== 0) {
-        return null;
-    }
-
-    return $result['stdout'];
+    return shell_exec(ptsb_rclone_command($command));
 }
 
 function ptsb_rclone_exec_input(string $command, string $input)
@@ -403,12 +372,6 @@ function ptsb_lock_store(array $payload, ?int $ttl = null): void {
     $key = ptsb_lock_key();
     set_transient($key, $payload, $ttl);
     update_option($key, $payload, false);
-
-    $cfg = ptsb_cfg();
-    $lockPath = (string)($cfg['lock'] ?? '');
-    if ($lockPath !== '') {
-        @touch($lockPath);
-    }
 }
 
 function ptsb_lock_info(): array {
@@ -425,13 +388,7 @@ function ptsb_lock_info(): array {
     $hasFile  = $lockPath !== '' && @file_exists($lockPath);
     $timestamp = isset($info['timestamp']) ? (int) $info['timestamp'] : 0;
 
-    $pid = isset($info['pid']) ? (int) $info['pid'] : 0;
-    if ($pid > 0 && !ptsb_process_is_running($pid)) {
-        ptsb_lock_release();
-        $info = [];
-    }
-
-    if ($timestamp && $info) {
+    if ($timestamp) {
         $age = time() - $timestamp;
         if ($ttl <= 0 || $age <= $ttl) {
             if ($hasFile || $age <= 120) {
@@ -472,12 +429,6 @@ function ptsb_lock_release(?string $token = null): void {
     delete_option($ownerKey);
     delete_transient(ptsb_lock_key());
     delete_option(ptsb_lock_key());
-
-    $cfg = ptsb_cfg();
-    $lockPath = (string)($cfg['lock'] ?? '');
-    if ($lockPath !== '' && @file_exists($lockPath)) {
-        @unlink($lockPath);
-    }
 }
 
 function ptsb_lock_touch(string $token, array $extra = []): void {
@@ -526,18 +477,6 @@ function ptsb_lock_try_acquire(int $attempts = 4, ?int $ttl = null): ?array {
     }
 
     return null;
-}
-
-function ptsb_process_is_running(int $pid): bool {
-    if ($pid <= 0) {
-        return false;
-    }
-
-    if (function_exists('posix_kill')) {
-        return @posix_kill($pid, 0);
-    }
-
-    return @file_exists('/proc/' . $pid);
 }
 
 function ptsb_is_readable($p){ return @is_file($p) && @is_readable($p); }
