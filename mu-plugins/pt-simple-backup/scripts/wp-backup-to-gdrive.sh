@@ -119,39 +119,67 @@ rclone_copyto_single() {
   local src="$1"
   local dest="$2"
 
-  local -a filtered_names=()
-  local -A filtered_values=()
+  local suppress_filters=0
+  if [[ -n "${RCLONE_FILTER:-}" || -n "${RCLONE_FILTER_FROM:-}" || -n "${RCLONE_FILTER_FILE:-}" ]]; then
+    suppress_filters=1
+  fi
 
-  while IFS= read -r var_name; do
-    case "$var_name" in
-      RCLONE_FILTER*|RCLONE_INCLUDE*|RCLONE_EXCLUDE*|RCLONE_FILES_FROM*)
-        if [[ ${!var_name+x} == x ]]; then
-          filtered_names+=("$var_name")
-          filtered_values["$var_name"]="${!var_name}"
-        fi
-        ;;
-    esac
-  done < <(compgen -e)
+  if (( suppress_filters )); then
+    log "RCLONE_FILTER detectado; removendo filtros para upload de arquivo único."
 
-  if (( ${#filtered_names[@]} )); then
-    log "Variáveis de filtro do rclone detectadas; removendo ${#filtered_names[@]} entradas para upload de arquivo único."
-    for var_name in "${filtered_names[@]}"; do
-      unset "$var_name"
-    done
+    if command -v env >/dev/null 2>&1; then
+      local -a cmd=(env)
+      [[ -n "${RCLONE_FILTER:-}" ]] && cmd+=(-u RCLONE_FILTER)
+      [[ -n "${RCLONE_FILTER_FROM:-}" ]] && cmd+=(-u RCLONE_FILTER_FROM)
+      [[ -n "${RCLONE_FILTER_FILE:-}" ]] && cmd+=(-u RCLONE_FILTER_FILE)
+      cmd+=(rclone)
+      "${cmd[@]}" copyto "$src" "$dest"
+      return $?
+    fi
+
+    local restore_filter=0
+    local restore_filter_from=0
+    local restore_filter_file=0
+    local prev_filter=""
+    local prev_filter_from=""
+    local prev_filter_file=""
+
+    if [[ -v RCLONE_FILTER ]]; then
+      restore_filter=1
+      prev_filter="$RCLONE_FILTER"
+      unset RCLONE_FILTER
+    fi
+    if [[ -v RCLONE_FILTER_FROM ]]; then
+      restore_filter_from=1
+      prev_filter_from="$RCLONE_FILTER_FROM"
+      unset RCLONE_FILTER_FROM
+    fi
+    if [[ -v RCLONE_FILTER_FILE ]]; then
+      restore_filter_file=1
+      prev_filter_file="$RCLONE_FILTER_FILE"
+      unset RCLONE_FILTER_FILE
+    fi
+
+    rclone copyto "$src" "$dest"
+    local rc=$?
+
+    if (( restore_filter )); then
+      RCLONE_FILTER="$prev_filter"
+      export RCLONE_FILTER
+    fi
+    if (( restore_filter_from )); then
+      RCLONE_FILTER_FROM="$prev_filter_from"
+      export RCLONE_FILTER_FROM
+    fi
+    if (( restore_filter_file )); then
+      RCLONE_FILTER_FILE="$prev_filter_file"
+      export RCLONE_FILTER_FILE
+    fi
+
+    return $rc
   fi
 
   rclone copyto "$src" "$dest"
-  local rc=$?
-
-  if (( ${#filtered_names[@]} )); then
-    for var_name in "${filtered_names[@]}"; do
-      local value="${filtered_values[$var_name]}"
-      printf -v "$var_name" '%s' "$value"
-      export "$var_name"
-    done
-  fi
-
-  return $rc
 }
 
 cleanup() {

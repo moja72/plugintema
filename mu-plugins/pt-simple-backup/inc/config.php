@@ -83,6 +83,40 @@ function ptsb_shell_env_prefix(): string {
     return '/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8';
 }
 
+function ptsb_script_supports_rclone_filters(): bool {
+    static $supports = null;
+
+    if ($supports !== null) {
+        return $supports;
+    }
+
+    $supports = false;
+
+    $cfg = ptsb_cfg();
+    $script = isset($cfg['script_backup']) ? (string) $cfg['script_backup'] : '';
+    if ($script === '') {
+        return $supports;
+    }
+
+    $bundled = dirname(__DIR__) . '/scripts/wp-backup-to-gdrive.sh';
+    $scriptReal = @realpath($script);
+    $bundledReal = @realpath($bundled);
+
+    if ($scriptReal && $bundledReal && $scriptReal === $bundledReal) {
+        $supports = true;
+        return $supports;
+    }
+
+    if (@is_readable($script)) {
+        $contents = @file_get_contents($script);
+        if (is_string($contents) && strpos($contents, 'rclone_copyto_single') !== false) {
+            $supports = true;
+        }
+    }
+
+    return $supports;
+}
+
 function ptsb_rclone_fast_list_enabled(): bool {
     $cfg = ptsb_cfg();
     $enabled = !empty($cfg['rclone_fast_list']);
@@ -149,7 +183,7 @@ function ptsb_rclone_backup_env(): array {
     }
 
     $filterRules = ptsb_rclone_uploads_filter_rules();
-    if ($filterRules !== '') {
+    if ($filterRules !== '' && ptsb_script_supports_rclone_filters()) {
         $defaults['RCLONE_FILTER'] = $filterRules;
     }
 

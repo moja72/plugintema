@@ -2,7 +2,8 @@
 
 ## [0.8.18] - 2025-10-29
 ### Fixed
-- Removemos dinamicamente todas as variáveis de filtro do `rclone` durante o `copyto`, incluindo `INCLUDE/EXCLUDE` e arquivos de lista, garantindo que o upload de arquivos únicos finalize sem erros antes de restaurar o ambiente original.
+- Exportamos as variáveis `RCLONE_FILTER*` apenas quando o script de backup suporta limpar os filtros para uploads individuais,
+  restaurando a compatibilidade com instalações que ainda utilizam o shell script legado e impedindo falhas no `rclone copyto`.
 
 ## [0.8.17] - 2025-10-29
 ### Fixed
