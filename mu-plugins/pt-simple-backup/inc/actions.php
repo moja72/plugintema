@@ -99,20 +99,7 @@ $effPrefix = ($prefix !== null && $prefix !== '') ? $prefix : ptsb_cfg()['prefix
     ];
 
     ptsb_manual_job_save($job_data);
-    ptsb_manual_job_wakeup(10, 'manual_click');
-
-    $cron_status = ptsb_cron_status_get();
-    if (($cron_status['last_manual_status'] ?? '') !== 'pending') {
-        ptsb_cron_trace_append('manual_pending', ['job' => (string) $job_data['id']]);
-    }
-    ptsb_cron_status_update([
-        'last_manual_check'  => time(),
-        'last_manual_status' => 'pending',
-        'last_manual_job'    => (string) $job_data['id'],
-        'last_manual_source' => 'manual_click',
-        'last_manual_error'  => '',
-        'last_manual_wait'   => '',
-    ]);
+    wp_schedule_single_event(time() + 5, 'ptsb_run_manual_backup', [(string)$job_data['id']]);
 
 
     // 6) Mensagem
