@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.17] - 2025-10-29
+### Fixed
+- Ignoramos variáveis `RCLONE_FILTER*` ao enviar o bundle final com `rclone copyto`, evitando falhas ao subir arquivos únicos e permitindo que os backups sejam concluídos com sucesso.
+
+## [0.8.16] - 2025-10-29
+### Fixed
+- Tornamos o script `wp-run-wpcron.sh` resiliente, permitindo sobrescrever caminhos via variáveis de ambiente e validando binários
+  antes da execução para evitar falhas silenciosas no cron do sistema.
+
 ## [0.8.15] - 2025-10-28
 ### Changed
 - Adicionamos cache transitório para quota e e-mail do Drive com expiração configurável e limpeza manual via "Forçar atualizar".
