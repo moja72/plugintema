@@ -99,7 +99,7 @@ $effPrefix = ($prefix !== null && $prefix !== '') ? $prefix : ptsb_cfg()['prefix
     ];
 
     ptsb_manual_job_save($job_data);
-    wp_schedule_single_event(time() + 5, 'ptsb_run_manual_backup', [(string)$job_data['id']]);
+    ptsb_schedule_cron_tick_soon(5);
 
 
     // 6) Mensagem
