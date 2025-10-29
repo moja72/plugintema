@@ -190,6 +190,25 @@ function ptsb_drive_info(bool $force_refresh = false): array {
     $rem_name = rtrim($remote, ':');
     $rem_with_colon = $rem_name !== '' ? $rem_name . ':' : $remote;
 
+    $config_remote_name = '';
+    $config_remote_with_colon = '';
+    if ($remote !== '') {
+        $colon_pos = strpos($remote, ':');
+        if ($colon_pos !== false) {
+            $config_remote_name = substr($remote, 0, $colon_pos);
+        } else {
+            $config_remote_name = $rem_name;
+        }
+
+        if ($config_remote_name !== '') {
+            $config_remote_with_colon = $config_remote_name . ':';
+        }
+    }
+
+    if ($config_remote_with_colon === '') {
+        $config_remote_with_colon = $remote;
+    }
+
     $aboutFailed = false;
     $userinfoFailed = false;
     $errorNotes = [];
@@ -275,12 +294,12 @@ function ptsb_drive_info(bool $force_refresh = false): array {
     }
 
     if (trim((string)$u) === '') {
-        $configRemote = $rem_name !== '' ? $rem_name : $remote;
+        $configRemote = $config_remote_name !== '' ? $config_remote_name : ($rem_name !== '' ? $rem_name : $remote);
         $configSupport = ptsb_rclone_userinfo_support_get($configRemote, 'config');
         $skipConfig = ($configSupport === false);
 
         if (!$skipConfig) {
-            $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($rem_with_colon));
+            $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($config_remote_with_colon));
             $u = $cfgResult['stdout'];
             $cfgOk = ((int) $cfgResult['exit_code'] === 0 && trim((string)$u) !== '');
 
@@ -361,8 +380,17 @@ function ptsb_drive_info_clear_cache(): void {
         ptsb_rclone_userinfo_support_clear($remote, 'backend');
 
         $rem_name = rtrim($remote, ':');
-        if ($rem_name !== '') {
-            ptsb_rclone_userinfo_support_clear($rem_name, 'config');
+        $config_remote_name = '';
+        $colon_pos = strpos($remote, ':');
+        if ($colon_pos !== false) {
+            $config_remote_name = substr($remote, 0, $colon_pos);
+        } else {
+            $config_remote_name = $rem_name;
+        }
+
+        $configRemote = $config_remote_name !== '' ? $config_remote_name : $rem_name;
+        if ($configRemote !== '') {
+            ptsb_rclone_userinfo_support_clear($configRemote, 'config');
         }
     }
 }

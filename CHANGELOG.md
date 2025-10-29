@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.22] - 2025-10-29
+### Fixed
+- Ajustamos o fallback `rclone config userinfo` para utilizar apenas o nome do remoto, evitando o erro "root '' doesn't support UserInfo" e permitindo que o backup seja agendado e executado corretamente.
+
 ## [0.8.21] - 2025-10-29
 ### Fixed
 - Ignoramos o comando `rclone userinfo` quando a versão instalada não o suporta, cacheando o resultado e evitando logs repetidos
