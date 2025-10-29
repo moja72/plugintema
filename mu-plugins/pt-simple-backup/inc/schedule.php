@@ -431,6 +431,11 @@ function ptsb_chunk_plan_save(array $plan): void {
     update_option(ptsb_chunk_plan_key(), $plan, false);
 }
 
+function ptsb_chunk_plan_is_active(): bool {
+    $plan = ptsb_chunk_plan_get();
+    return !empty($plan['active']);
+}
+
 function ptsb_chunk_plan_reset(): void {
     delete_option(ptsb_chunk_plan_key());
 }
@@ -1092,14 +1097,17 @@ if (!$cycles) {
 
 
     // ====== NOVA ENGINE: rotinas ======
-    $g       = ptsb_cycles_global_get();
-    $state   = ptsb_cycles_state_get();
-    $running = ptsb_lock_is_active();
+    $g           = ptsb_cycles_global_get();
+    $state       = ptsb_cycles_state_get();
+    $running     = ptsb_lock_is_active();
+    $chunkActive = ptsb_chunk_plan_is_active();
     // carregar/limpar mapa de execuções a ignorar
     ptsb_skipmap_gc();
     $skipmap = ptsb_skipmap_get();
 
-    if (!ptsb_is_within_maintenance_window($now)) {
+    $withinWindow = ptsb_is_within_maintenance_window($now);
+
+    if (!$withinWindow && !$chunkActive) {
         if (!empty($state['queued']['time'])) {
             $reason = (string) ($state['queued']['reason'] ?? '');
             if ($reason !== 'window') {
@@ -1111,6 +1119,15 @@ if (!$cycles) {
 
         $label = ptsb_maintenance_window_label();
         ptsb_log_throttle('maintenance_window_block', 'Execuções automáticas pausadas fora da janela de manutenção ' . $label . ' (BRT).', 900);
+        return;
+    }
+
+    if (!$withinWindow && $chunkActive) {
+        if (!empty($state['queued']['time'])) {
+            $state['queued']['reason']    = 'window';
+            $state['queued']['queued_at'] = $state['queued']['queued_at'] ?: time();
+            ptsb_cycles_state_save($state);
+        }
         return;
     }
 
@@ -1352,6 +1369,17 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
     $cfg   = ptsb_cfg();
     $lock  = ptsb_lock_try_acquire();
     if (!$lock) {
+        return false;
+    }
+
+    if (!ptsb_rclone_remote_preflight()) {
+        ptsb_log('Backup abortado: falha ao validar o remoto do rclone.');
+        $token = (string)($lock['token'] ?? '');
+        if ($token !== '') {
+            ptsb_lock_release($token);
+        } else {
+            ptsb_lock_release();
+        }
         return false;
     }
 
