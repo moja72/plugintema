@@ -100,6 +100,72 @@ function ptsb_rclone_remote_preflight(bool $force_refresh = false): bool {
     return false;
 }
 
+function ptsb_rclone_userinfo_support_key(string $remote, string $mode = 'backend'): string {
+    return 'ptsb_rclone_userinfo_' . md5($mode . '|' . $remote);
+}
+
+function ptsb_rclone_userinfo_support_get(string $remote, string $mode = 'backend'): ?bool {
+    if ($remote === '') {
+        return null;
+    }
+
+    $stored = get_transient(ptsb_rclone_userinfo_support_key($remote, $mode));
+    if ($stored === 'yes') {
+        return true;
+    }
+    if ($stored === 'no') {
+        return false;
+    }
+
+    return null;
+}
+
+function ptsb_rclone_userinfo_support_set(string $remote, string $mode, bool $supported): void {
+    if ($remote === '') {
+        return;
+    }
+
+    $hour = defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600;
+    $ttl  = max($hour, 12 * $hour);
+
+    set_transient(
+        ptsb_rclone_userinfo_support_key($remote, $mode),
+        $supported ? 'yes' : 'no',
+        $ttl
+    );
+}
+
+function ptsb_rclone_userinfo_support_clear(string $remote, string $mode = 'backend'): void {
+    if ($remote === '') {
+        return;
+    }
+
+    delete_transient(ptsb_rclone_userinfo_support_key($remote, $mode));
+}
+
+function ptsb_rclone_userinfo_error_is_missing_command(string ...$messages): bool {
+    $haystack = strtolower(trim(implode(' ', array_filter($messages))));
+    if ($haystack === '') {
+        return false;
+    }
+
+    $patterns = [
+        'command not found',
+        'unknown command',
+        'no such command',
+        'not available for this backend',
+        'unsupported command',
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (strpos($haystack, $pattern) !== false) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function ptsb_drive_info(bool $force_refresh = false): array {
     $cfg  = ptsb_cfg();
     $info = ['email' => '', 'used' => null, 'total' => null, 'fetched_at' => null];
@@ -169,30 +235,81 @@ function ptsb_drive_info(bool $force_refresh = false): array {
         }
     }
 
-    $uResult = ptsb_rclone_exec_with_status('backend userinfo ' . escapeshellarg($remote));
-    $u = $uResult['stdout'];
-    if ((int) $uResult['exit_code'] !== 0 || trim((string) $u) === '') {
-        $userinfoFailed = true;
-        $note = trim($uResult['stderr']);
-        if ($note !== '') {
-            $errorNotes[] = $note;
+    $u = '';
+    $backendSupport = ptsb_rclone_userinfo_support_get($remote, 'backend');
+    $skipBackend = ($backendSupport === false);
+
+    if (!$skipBackend) {
+        $uResult = ptsb_rclone_exec_with_status('backend userinfo ' . escapeshellarg($remote));
+        $u = $uResult['stdout'];
+        $exitOk = ((int) $uResult['exit_code'] === 0 && trim((string)$u) !== '');
+
+        if ($exitOk) {
+            ptsb_rclone_userinfo_support_set($remote, 'backend', true);
+            $userinfoFailed = false;
+        } else {
+            $note = trim($uResult['stderr']);
+            if ($note === '') {
+                $note = trim((string) $uResult['stdout']);
+            }
+
+            if (ptsb_rclone_userinfo_error_is_missing_command($note)) {
+                ptsb_rclone_userinfo_support_set($remote, 'backend', false);
+                $skipBackend = true;
+                $userinfoFailed = false;
+                $u = '';
+                $logKey = 'rclone_backend_userinfo_' . md5($remote);
+                ptsb_log_throttle(
+                    $logKey,
+                    '[drive-info] Comando rclone "backend userinfo" indisponível; tentativa ignorada.',
+                    43200
+                );
+            } else {
+                $userinfoFailed = true;
+                if ($note !== '') {
+                    $errorNotes[] = $note;
+                }
+            }
         }
     }
 
     if (trim((string)$u) === '') {
-        $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($rem_name));
-        $u = $cfgResult['stdout'];
-        if ((int) $cfgResult['exit_code'] !== 0 || trim((string) $u) === '') {
-            $userinfoFailed = true;
-            $note = trim($cfgResult['stderr']);
-            if ($note !== '') {
-                $errorNotes[] = $note;
+        $configRemote = $rem_name !== '' ? $rem_name : $remote;
+        $configSupport = ptsb_rclone_userinfo_support_get($configRemote, 'config');
+        $skipConfig = ($configSupport === false);
+
+        if (!$skipConfig) {
+            $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($rem_name));
+            $u = $cfgResult['stdout'];
+            $cfgOk = ((int) $cfgResult['exit_code'] === 0 && trim((string)$u) !== '');
+
+            if ($cfgOk) {
+                ptsb_rclone_userinfo_support_set($configRemote, 'config', true);
+                $userinfoFailed = false;
+            } else {
+                $note = trim($cfgResult['stderr']);
+                if ($note === '') {
+                    $note = trim((string) $cfgResult['stdout']);
+                }
+
+                if (ptsb_rclone_userinfo_error_is_missing_command($note)) {
+                    ptsb_rclone_userinfo_support_set($configRemote, 'config', false);
+                    $userinfoFailed = false;
+                    $u = '';
+                    $logKey = 'rclone_config_userinfo_' . md5($configRemote);
+                    ptsb_log_throttle(
+                        $logKey,
+                        '[drive-info] Comando rclone "config userinfo" indisponível; ignorando fallback.',
+                        43200
+                    );
+                } else {
+                    $userinfoFailed = true;
+                    if ($note !== '') {
+                        $errorNotes[] = $note;
+                    }
+                }
             }
-        } else {
-            $userinfoFailed = false;
         }
-    } else {
-        $userinfoFailed = false;
     }
 
     if ($u !== null && $u !== '') {
@@ -236,6 +353,17 @@ function ptsb_drive_info(bool $force_refresh = false): array {
 
 function ptsb_drive_info_clear_cache(): void {
     delete_transient('ptsb_drive_info_v1');
+
+    $cfg = ptsb_cfg();
+    $remote = (string) ($cfg['remote'] ?? '');
+    if ($remote !== '') {
+        ptsb_rclone_userinfo_support_clear($remote, 'backend');
+
+        $rem_name = rtrim($remote, ':');
+        if ($rem_name !== '') {
+            ptsb_rclone_userinfo_support_clear($rem_name, 'config');
+        }
+    }
 }
 
 /* -------------------------------------------------------
