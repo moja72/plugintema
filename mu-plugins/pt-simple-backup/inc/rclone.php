@@ -145,7 +145,13 @@ function ptsb_drive_info(bool $force_refresh = false): array {
 
     if (!empty($failures)) {
         delete_transient($cache_key);
-        ptsb_log(sprintf('[drive-info] Falha ao executar rclone (%s) em %s.', implode(', ', $failures), $remote));
+        $message = sprintf('[drive-info] Falha ao executar rclone (%s) em %s.', implode(', ', $failures), $remote);
+        if (function_exists('ptsb_log_throttle')) {
+            $key = 'drive_info_fail_' . md5($remote);
+            ptsb_log_throttle($key, $message, 600);
+        } else {
+            ptsb_log($message);
+        }
         return $info;
     }
 

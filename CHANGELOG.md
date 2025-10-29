@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.19] - 2025-10-29
+### Fixed
+- Passamos a identificar explicitamente quando o script de backup sabe limpar `RCLONE_FILTER*`, usando um marcador dedicado no
+  shell script empacotado e validando scripts externos antes de exportar os filtros, eliminando o erro `can't limit to single
+  files when using filters`.
+- Liberamos o lock interno assim que cada chunk finaliza (com sucesso ou falha) e ensinamos o shell script a tocar/remover o
+  arquivo de lock informado via `PTSB_LOCK_FILE`, impedindo que execuções com erro mantenham o mutex travado e bloqueiem novas
+  tentativas.
+- Permitimos que o watchdog de chunks continue disparando reprocessamentos fora da janela de manutenção quando há trabalho
+  pendente, garantindo que uma rotina iniciada possa finalizar mesmo após o horário configurado.
+- Passamos a limitar o log `[drive-info]` com `ptsb_log_throttle`, evitando spam periódico quando o `rclone about/userinfo`
+  falha temporariamente.
+
 ## [0.8.18] - 2025-10-29
 ### Fixed
 - Exportamos as variáveis `RCLONE_FILTER*` apenas quando o script de backup suporta limpar os filtros para uploads individuais,
