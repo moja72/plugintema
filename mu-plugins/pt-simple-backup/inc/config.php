@@ -90,29 +90,30 @@ function ptsb_script_supports_rclone_filters(): bool {
         return $supports;
     }
 
-    $supports = false;
-
     $cfg = ptsb_cfg();
     $script = isset($cfg['script_backup']) ? (string) $cfg['script_backup'] : '';
     if ($script === '') {
-        return $supports;
+        return false;
     }
 
     $bundled = dirname(__DIR__) . '/scripts/wp-backup-to-gdrive.sh';
     $scriptReal = @realpath($script);
     $bundledReal = @realpath($bundled);
 
-    if ($scriptReal && $bundledReal && $scriptReal === $bundledReal) {
-        $supports = true;
-        return $supports;
-    }
+    $supports = ($scriptReal && $bundledReal && $scriptReal === $bundledReal);
 
-    if (@is_readable($script)) {
-        $contents = @file_get_contents($script);
-        if (is_string($contents) && strpos($contents, 'rclone_copyto_single') !== false) {
-            $supports = true;
+    if (!$supports && @is_readable($script)) {
+        $snippet = @file_get_contents($script, false, null, 0, 4096);
+        if (is_string($snippet)) {
+            if (strpos($snippet, 'PTSB_FILTER_SUPPORT=1') !== false) {
+                $supports = true;
+            } elseif (preg_match('/function\s+rclone_copyto_single\s*\(/', $snippet)) {
+                $supports = true;
+            }
         }
     }
+
+    $supports = (bool) apply_filters('ptsb_script_supports_rclone_filters', $supports, $script);
 
     return $supports;
 }
