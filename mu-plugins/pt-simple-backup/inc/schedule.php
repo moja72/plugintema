@@ -508,6 +508,23 @@ function ptsb_chunk_plan_get(): array {
     return $plan;
 }
 
+function ptsb_chunk_plan_has_pending_work(): bool {
+    $plan = ptsb_chunk_plan_get();
+    if (empty($plan['active'])) {
+        return false;
+    }
+
+    if (!empty($plan['current'])) {
+        return true;
+    }
+
+    if (!empty($plan['queue'])) {
+        return true;
+    }
+
+    return false;
+}
+
 function ptsb_chunk_plan_save(array $plan): void {
     update_option(ptsb_chunk_plan_key(), $plan, false);
 }
@@ -706,6 +723,8 @@ function ptsb_chunk_plan_mark_failure(string $message, array $opts = []): void {
         return;
     }
 
+    ptsb_lock_release();
+
     $current = ptsb_chunk_plan_entry_normalize((array) $plan['current']);
     $plan['current'] = null;
 
@@ -794,6 +813,9 @@ function ptsb_chunk_plan_watchdog(): void {
 
 function ptsb_chunk_plan_complete(string $file): array {
     $plan = ptsb_chunk_plan_get();
+
+    ptsb_lock_release();
+
     if (empty($plan['active'])) {
         ptsb_chunk_plan_reset();
         return ['final' => true, 'meta' => []];
@@ -1425,6 +1447,10 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
          . 'RETENTION='      . escapeshellarg($keepDays)          . ' '
          . 'KEEP_FOREVER='   . escapeshellarg($keepForever ? 1 : 0) . ' '
          . 'PARTS='          . escapeshellarg($partsCsv)          . ' ';
+
+    if (!empty($cfg['lock'])) {
+        $env .= 'PTSB_LOCK_FILE=' . escapeshellarg((string) $cfg['lock']) . ' ';
+    }
 
     foreach ($extraEnv as $key => $value) {
         $name = strtoupper(preg_replace('/[^A-Z0-9_]/i', '_', (string)$key));

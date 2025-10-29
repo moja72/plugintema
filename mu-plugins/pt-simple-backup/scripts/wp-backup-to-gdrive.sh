@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# PTSB_FILTER_SUPPORT=1
 set -euo pipefail
 set -o errtrace
 
@@ -158,6 +159,10 @@ cleanup() {
   if [[ -n "${WORK_DIR:-}" && -d "${WORK_DIR:-}" ]]; then
     rm -rf "$WORK_DIR"
   fi
+  local lock_file="${LOCK_FILE:-}"
+  if [[ -n "$lock_file" ]]; then
+    rm -f "$lock_file"
+  fi
 }
 
 trap cleanup EXIT
@@ -189,6 +194,12 @@ fi
 
 [[ -z "$REMOTE" ]] && fail "REMOTE não informado"
 [[ -z "$WP_PATH" ]] && fail "WP_PATH não informado"
+
+LOCK_FILE="${PTSB_LOCK_FILE:-}"
+if [[ -n "$LOCK_FILE" ]]; then
+  mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
+  printf '%s\n' "$$" >"$LOCK_FILE" 2>/dev/null || true
+fi
 
 if [[ ! -d "$WP_PATH" ]]; then
   fail "WP_PATH inválido: $WP_PATH"
