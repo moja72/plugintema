@@ -188,6 +188,7 @@ function ptsb_drive_info(bool $force_refresh = false): array {
 
     $remote   = $cfg['remote'];
     $rem_name = rtrim($remote, ':');
+    $rem_with_colon = $rem_name !== '' ? $rem_name . ':' : $remote;
 
     $aboutFailed = false;
     $userinfoFailed = false;
@@ -279,7 +280,7 @@ function ptsb_drive_info(bool $force_refresh = false): array {
         $skipConfig = ($configSupport === false);
 
         if (!$skipConfig) {
-            $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($rem_name));
+            $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($rem_with_colon));
             $u = $cfgResult['stdout'];
             $cfgOk = ((int) $cfgResult['exit_code'] === 0 && trim((string)$u) !== '');
 
