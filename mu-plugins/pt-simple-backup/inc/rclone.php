@@ -54,6 +54,52 @@ function ptsb_manifest_write(string $tarFile, array $add, bool $merge = true): b
  * Drive: quota e e-mail (best effort)
  * -----------------------------------------------------*/
 
+function ptsb_rclone_remote_preflight(bool $force_refresh = false): bool {
+    $cfg    = ptsb_cfg();
+    $remote = (string) ($cfg['remote'] ?? '');
+
+    if (!ptsb_can_shell() || $remote === '') {
+        return false;
+    }
+
+    $cache_key = 'ptsb_rclone_preflight_' . md5($remote);
+    if (!$force_refresh) {
+        $cached = get_transient($cache_key);
+        if ($cached === 'ok') {
+            return true;
+        }
+        if ($cached === 'fail') {
+            return false;
+        }
+    }
+
+    if (!ptsb_shell_command_exists('rclone')) {
+        ptsb_log_throttle('rclone_missing', 'rclone não encontrado ao validar o remoto.', 1800);
+        set_transient($cache_key, 'fail', 300);
+        return false;
+    }
+
+    $result = ptsb_rclone_exec_with_status('lsjson ' . escapeshellarg($remote) . ' --max-depth 0 --files-only --dirs-only --limit 1');
+
+    if ((int) $result['exit_code'] === 0) {
+        set_transient($cache_key, 'ok', 600);
+        return true;
+    }
+
+    $error = trim($result['stderr']);
+    if ($error === '') {
+        $error = trim($result['stdout']);
+    }
+    if ($error === '') {
+        $error = 'comando retornou código ' . (int) $result['exit_code'];
+    }
+
+    ptsb_log_throttle('rclone_preflight_fail', '[preflight] Falha ao validar o remoto: ' . $error, 600);
+    set_transient($cache_key, 'fail', 300);
+
+    return false;
+}
+
 function ptsb_drive_info(bool $force_refresh = false): array {
     $cfg  = ptsb_cfg();
     $info = ['email' => '', 'used' => null, 'total' => null, 'fetched_at' => null];
@@ -79,10 +125,19 @@ function ptsb_drive_info(bool $force_refresh = false): array {
 
     $aboutFailed = false;
     $userinfoFailed = false;
+    $errorNotes = [];
 
-    $aboutJson = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' --json 2>/dev/null');
-    if ($aboutJson === null) {
+    $aboutResult = ptsb_rclone_exec_with_status('about ' . escapeshellarg($remote) . ' --json');
+    $aboutJson   = $aboutResult['stdout'];
+    if ((int) $aboutResult['exit_code'] !== 0 || trim((string) $aboutJson) === '') {
         $aboutFailed = true;
+        $note = trim($aboutResult['stderr']);
+        if ($note === '') {
+            $note = trim((string) $aboutResult['stdout']);
+        }
+        if ($note !== '') {
+            $errorNotes[] = $note;
+        }
     } else {
         $j = json_decode((string)$aboutJson, true);
         if (is_array($j)) {
@@ -90,13 +145,19 @@ function ptsb_drive_info(bool $force_refresh = false): array {
             if (isset($j['total'])) $info['total'] = (int)$j['total'];
         } else {
             $aboutFailed = true;
+            $errorNotes[] = 'JSON inválido retornado por rclone about.';
         }
     }
 
     if ($aboutFailed) {
-        $txt = ptsb_rclone_exec('about ' . escapeshellarg($remote) . ' 2>/dev/null');
-        if ($txt === null) {
+        $txtResult = ptsb_rclone_exec_with_status('about ' . escapeshellarg($remote));
+        $txt = $txtResult['stdout'];
+        if ((int) $txtResult['exit_code'] !== 0 && trim((string) $txt) === '') {
             $aboutFailed = true;
+            $note = trim($txtResult['stderr']);
+            if ($note !== '') {
+                $errorNotes[] = $note;
+            }
         } else {
             $aboutFailed = false;
             if (preg_match('/Used:\s*([\d.,]+)\s*([KMGT]i?B)/i', (string)$txt, $m)) {
@@ -108,15 +169,25 @@ function ptsb_drive_info(bool $force_refresh = false): array {
         }
     }
 
-    $u = ptsb_rclone_exec('backend userinfo ' . escapeshellarg($remote) . ' 2>/dev/null');
-    if ($u === null) {
+    $uResult = ptsb_rclone_exec_with_status('backend userinfo ' . escapeshellarg($remote));
+    $u = $uResult['stdout'];
+    if ((int) $uResult['exit_code'] !== 0 || trim((string) $u) === '') {
         $userinfoFailed = true;
+        $note = trim($uResult['stderr']);
+        if ($note !== '') {
+            $errorNotes[] = $note;
+        }
     }
 
     if (trim((string)$u) === '') {
-        $u = ptsb_rclone_exec('config userinfo ' . escapeshellarg($rem_name) . ' 2>/dev/null');
-        if ($u === null) {
+        $cfgResult = ptsb_rclone_exec_with_status('config userinfo ' . escapeshellarg($rem_name));
+        $u = $cfgResult['stdout'];
+        if ((int) $cfgResult['exit_code'] !== 0 || trim((string) $u) === '') {
             $userinfoFailed = true;
+            $note = trim($cfgResult['stderr']);
+            if ($note !== '') {
+                $errorNotes[] = $note;
+            }
         } else {
             $userinfoFailed = false;
         }
@@ -145,12 +216,14 @@ function ptsb_drive_info(bool $force_refresh = false): array {
 
     if (!empty($failures)) {
         delete_transient($cache_key);
-        $message = sprintf('[drive-info] Falha ao executar rclone (%s) em %s.', implode(', ', $failures), $remote);
-        if (function_exists('ptsb_log_throttle')) {
-            $key = 'drive_info_fail_' . md5($remote);
-            ptsb_log_throttle($key, $message, 600);
+        $note = '';
+        if ($errorNotes) {
+            $note = trim((string) reset($errorNotes));
+        }
+        if ($note !== '') {
+            ptsb_log(sprintf('[drive-info] Falha ao executar rclone (%s) em %s: %s', implode(', ', $failures), $remote, $note));
         } else {
-            ptsb_log($message);
+            ptsb_log(sprintf('[drive-info] Falha ao executar rclone (%s) em %s.', implode(', ', $failures), $remote));
         }
         return $info;
     }
