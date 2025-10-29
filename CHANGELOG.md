@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.18] - 2025-10-29
+### Fixed
+- Exportamos as variáveis `RCLONE_FILTER*` apenas quando o script de backup suporta limpar os filtros para uploads individuais,
+  restaurando a compatibilidade com instalações que ainda utilizam o shell script legado e impedindo falhas no `rclone copyto`.
+
 ## [0.8.17] - 2025-10-29
 ### Fixed
 - Ignoramos variáveis `RCLONE_FILTER*` ao enviar o bundle final com `rclone copyto`, evitando falhas ao subir arquivos únicos e permitindo que os backups sejam concluídos com sucesso.
