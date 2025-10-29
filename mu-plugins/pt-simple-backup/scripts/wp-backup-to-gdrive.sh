@@ -115,6 +115,45 @@ metrics_emit_summary() {
   log "METRICS {\"started_at\":\"${started_escaped}\",\"finished_at\":\"${ended_escaped}\",\"duration_ms\":${duration_ms},\"bytes_transferred\":${bytes_transferred},\"cpu_seconds\":${cpu_seconds},\"io_wait_seconds\":${io_wait_seconds},\"peak_memory_bytes\":${peak_bytes},\"steps\":${steps_json}}"
 }
 
+rclone_copyto_single() {
+  local src="$1"
+  local dest="$2"
+
+  local -a filtered_names=()
+  local -A filtered_values=()
+
+  while IFS= read -r var_name; do
+    case "$var_name" in
+      RCLONE_FILTER*|RCLONE_INCLUDE*|RCLONE_EXCLUDE*|RCLONE_FILES_FROM*)
+        if [[ ${!var_name+x} == x ]]; then
+          filtered_names+=("$var_name")
+          filtered_values["$var_name"]="${!var_name}"
+        fi
+        ;;
+    esac
+  done < <(compgen -e)
+
+  if (( ${#filtered_names[@]} )); then
+    log "Variáveis de filtro do rclone detectadas; removendo ${#filtered_names[@]} entradas para upload de arquivo único."
+    for var_name in "${filtered_names[@]}"; do
+      unset "$var_name"
+    done
+  fi
+
+  rclone copyto "$src" "$dest"
+  local rc=$?
+
+  if (( ${#filtered_names[@]} )); then
+    for var_name in "${filtered_names[@]}"; do
+      local value="${filtered_values[$var_name]}"
+      printf -v "$var_name" '%s' "$value"
+      export "$var_name"
+    done
+  fi
+
+  return $rc
+}
+
 cleanup() {
   if [[ ${PTSB_METRICS_SUCCESS:-0} -eq 1 ]]; then
     metrics_emit_summary
@@ -330,7 +369,7 @@ fi
 
 log "Uploading to $REMOTE_TARGET"
 metrics_step_begin "upload"
-rclone copyto "$BUNDLE_GZ" "$REMOTE_TARGET"
+rclone_copyto_single "$BUNDLE_GZ" "$REMOTE_TARGET"
 metrics_step_end "upload"
 
 log "Uploaded and removing local bundle"
