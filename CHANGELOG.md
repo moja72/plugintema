@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.21] - 2025-10-29
+### Fixed
+- Ignoramos o comando `rclone userinfo` quando a versão instalada não o suporta, cacheando o resultado e evitando logs repetidos
+  de falha ao coletar os dados do Drive.
+- Registramos uma nota única quando o recurso está ausente e limpamos o cache associado ao forçar uma nova leitura.
+
 ## [0.8.20] - 2025-10-29
 ### Changed
 - Refatoramos o disparo de backups manuais para usar a fila do cron minutely, garantindo que o clique no painel apenas agende o processo e que a execução aconteça fora da requisição do admin.
