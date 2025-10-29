@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.20] - 2025-10-29
+### Changed
+- Refatoramos o disparo de backups manuais para usar a fila do cron minutely, garantindo que o clique no painel apenas agende o processo e que a execução aconteça fora da requisição do admin.
+- Mantivemos o cron ativo sempre que houver job manual ou plano de chunks pendente, agendando novos ticks prioritários para respeitar o lock e evitar disparos simultâneos.
+
+## [0.8.19] - 2025-10-29
+### Fixed
+- Reforçamos o script de backup para limpar variáveis `RCLONE_FILTER*` em um subshell dedicado e registrar o comando que falhou,
+  evitando abortos silenciosos e fornecendo contexto para o watchdog dos chunks.
+- Passamos a exigir o marcador `PTSB_RCLONE_FILTER_SUPPORT=1` ao detectar suporte do shell script às variáveis de filtro, impedindo
+  falsos positivos quando ainda existe um script legado sem essa funcionalidade.
+- Permitimos que um plano de chunks em andamento continue fora da janela de manutenção, mantendo apenas novas rotinas bloqueadas
+  e reduzindo interrupções com o lock ativo.
+- Validamos se o processo associado ao lock ainda está vivo e sincronizamos o arquivo `/tmp/wpbackup.lock`, liberando travas
+  órfãs rapidamente.
+- Executamos um pré-cheque do remoto `rclone` antes de disparar o backup e enriquecemos os logs de quota/e-mail com detalhes do
+  erro retornado pelo CLI.
+
 ## [0.8.18] - 2025-10-29
 ### Fixed
 - Exportamos as variáveis `RCLONE_FILTER*` apenas quando o script de backup suporta limpar os filtros para uploads individuais,
