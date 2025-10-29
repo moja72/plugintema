@@ -221,6 +221,15 @@ function ptsb_manual_job_save(array $job): void {
     update_option('ptsb_manual_job', $job, false);
 }
 
+function ptsb_schedule_cron_tick_soon(int $delay = 10): void {
+    $cfg    = ptsb_cfg();
+    $hook   = $cfg['cron_hook'];
+    $delay  = max(1, (int) $delay);
+    $target = time() + $delay;
+
+    wp_schedule_single_event($target, $hook);
+}
+
 function ptsb_manual_job_is_active(array $job): bool {
     $status = (string)($job['status'] ?? 'idle');
     return in_array($status, ['pending','waiting_lock','running'], true);
@@ -1115,7 +1124,9 @@ add_action('init', function(){
         if (!empty($cy['enabled'])) { $has_enabled_cycle = true; break; }
     }
 
-    if ($auto_enabled || $has_enabled_cycle) {
+    $manual_active = ptsb_manual_job_is_active(ptsb_manual_job_get());
+
+    if ($auto_enabled || $has_enabled_cycle || $manual_active) {
         if (!wp_next_scheduled($hook)) {
             wp_schedule_event(time() + 30, $cfg['cron_sched'], $hook);
         }
@@ -1123,10 +1134,69 @@ add_action('init', function(){
         wp_clear_scheduled_hook($hook);
     }
 
-    if (ptsb_manual_job_requires_cron() || ptsb_chunk_plan_is_active()) {
-        ptsb_cron_schedule_tick_if_late(10);
+
+add_action('ptsb_cron_tick', 'ptsb_manual_job_handle_via_cron', 1);
+
+function ptsb_manual_job_handle_via_cron(): void {
+    $job = ptsb_manual_job_get();
+    if ($job['id'] === '') {
+        return;
     }
-});
+
+    $status = (string) ($job['status'] ?? 'idle');
+    if (!in_array($status, ['pending', 'waiting_lock'], true)) {
+        return;
+    }
+
+    if (!ptsb_can_shell()) {
+        ptsb_manual_job_mark_failed('Não foi possível iniciar o backup (shell_exec indisponível).');
+        return;
+    }
+
+    if (ptsb_lock_is_active()) {
+        if ($status !== 'waiting_lock' || (string) ($job['message'] ?? '') !== 'Aguardando outro backup finalizar para iniciar.') {
+            $job['status']  = 'waiting_lock';
+            $job['message'] = 'Aguardando outro backup finalizar para iniciar.';
+            ptsb_manual_job_save($job);
+        }
+        ptsb_schedule_cron_tick_soon(30);
+        return;
+    }
+
+    $payload        = is_array($job['payload']) ? $job['payload'] : [];
+    $partsCsv       = isset($payload['parts_csv']) ? (string) $payload['parts_csv'] : null;
+    $overridePrefix = isset($payload['prefix']) ? (string) $payload['prefix'] : null;
+    $keepDays       = $payload['keep_days'] ?? null;
+    $keepForever    = !empty($payload['keep_forever']);
+    $effectivePref  = $payload['effective_prefix'] ?? ($overridePrefix ?: ptsb_cfg()['prefix']);
+
+    if ($keepForever) {
+        ptsb_plan_mark_keep_next($effectivePref);
+    }
+
+    $job['status']     = 'running';
+    $job['message']    = 'Backup em execução. Acompanhe o progresso abaixo.';
+    $job['started_at'] = time();
+    $job['attempts']   = (int) $job['attempts'] + 1;
+    ptsb_manual_job_save($job);
+
+    $intent = [
+        'prefix'       => $effectivePref,
+        'keep_days'    => ($keepDays === null) ? (int) ptsb_settings()['keep_days'] : (int) $keepDays,
+        'keep_forever' => $keepForever ? 1 : 0,
+        'origin'       => 'manual',
+        'started_at'   => time(),
+        'job_id'       => (string) $job['id'],
+    ];
+    update_option('ptsb_last_run_intent', $intent, false);
+
+    $started = ptsb_start_backup($partsCsv, $overridePrefix, $keepDays);
+
+    if (!$started) {
+        ptsb_manual_job_mark_failed('Falha ao iniciar o backup manual. Verifique o log para mais detalhes.');
+        ptsb_schedule_cron_tick_soon(60);
+    }
+}
 
 
 add_action('ptsb_cron_tick', function(){
@@ -1554,7 +1624,7 @@ function ptsb_run_backup_job(string $partsCsv, string $prefix, int $keepDays, bo
  * Observação: permite KEEP_DAYS = 0 (sentinela "sempre manter"), sem forçar para 1.
  */
 
-function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null){
+function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDays = null): bool {
     $cfg = ptsb_cfg();
     $set = ptsb_settings();
 
@@ -1614,12 +1684,16 @@ function ptsb_start_backup($partsCsv = null, $overridePrefix = null, $overrideDa
         }
     }
 
-    if (!ptsb_run_backup_job($runParts, $prefix, $keepDays, $keepDays === 0, $extraEnv, ['chunk' => $chunk, 'meta' => $meta])) {
+    $started = ptsb_run_backup_job($runParts, $prefix, $keepDays, $keepDays === 0, $extraEnv, ['chunk' => $chunk, 'meta' => $meta]);
+
+    if (!$started) {
         if (!empty($chunk['total']) && (int)$chunk['total'] > 1) {
             // se falhou, limpa o plano para evitar ficar travado
             ptsb_chunk_plan_reset();
         }
     }
+
+    return $started;
 }
 
 // checar notificação no admin e também no cron do plugin

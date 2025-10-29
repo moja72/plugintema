@@ -2,8 +2,11 @@
 
 ## [0.8.20] - 2025-10-29
 ### Changed
-- Refatoramos o disparo de backups manuais para usar a fila do cron minutely, garantindo que o clique no painel apenas agende o processo e que a execução aconteça fora da requisição do admin.
-- Mantivemos o cron ativo sempre que houver job manual ou plano de chunks pendente, agendando novos ticks prioritários para respeitar o lock e evitar disparos simultâneos.
+- Refatoramos o disparo manual para ser executado exclusivamente pelo cron do plugin, com reprocessamento automático enquanto houver lock ativo e mensagens consistentes na interface.
+- Agendamos o hook `ptsb_cron_tick` sempre que existir job manual pendente, garantindo execução mesmo sem rotinas automáticas habilitadas e criando disparos imediatos dedicados ao clicar em "Backup agora".
+
+### Fixed
+- Passamos a validar o sucesso ao iniciar o shell de backup, marcando o job manual como falho quando o cron não consegue acionar o script e preservando o plano de chunks.
 
 ## [0.8.19] - 2025-10-29
 ### Fixed
